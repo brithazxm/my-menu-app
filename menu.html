@@ -3,21 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>智能菜单规划与随机点餐</title>
-    <!-- 引入 Tailwind CSS -->
+    <title>智能菜单规划与随机点餐 - 本地版</title>
+    <!-- 引入 Tailwind CSS 以实现快速、响应式的移动端界面设计 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* 使用 Inter 字体以获得现代感和更好的移动端显示 */
+        /* 引入 Inter 字体以获得现代感和更好的移动端显示 */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f7f9fb;
         }
-        /* 强制主容器在小屏幕上占满宽度 */
+        /* 强制主容器在小屏幕上占满宽度并确保高度足够 */
         #app-container {
             min-height: 100vh;
         }
-        /* 自定义滚动条样式 */
+        /* 自定义滚动条样式，用于菜单列表 */
         .custom-scrollbar::-webkit-scrollbar {
             width: 4px;
         }
@@ -32,18 +32,18 @@
     <div id="app-container" class="w-full max-w-2xl mx-auto bg-white shadow-2xl rounded-2xl p-6 sm:p-8 lg:p-10">
 
         <h1 class="text-3xl font-extrabold text-indigo-700 mb-2">🍽️ 智能菜单规划</h1>
-        <p class="text-sm text-gray-500 mb-6 border-b pb-4">
-            菜单数据已安全存储在您的云端。您的用户ID: 
-            <span id="user-id-display" class="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">Loading...</span>
-        </p>
-
-        <!-- 加载状态指示器 -->
-        <div id="loading-spinner" class="text-center py-10 hidden">
-            <div class="animate-spin inline-block w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full"></div>
-            <p class="mt-2 text-indigo-600">正在加载数据和身份验证...</p>
+        
+        <!-- 本地模式提示横幅 -->
+        <div class="p-3 mb-4 rounded-lg text-sm font-medium bg-yellow-100 text-yellow-700">
+            ⚠️ 当前使用**本地存储模式**，数据仅保存在本设备浏览器中。
         </div>
 
-        <div id="main-content" class="space-y-10 hidden">
+        <p class="text-sm text-gray-500 mb-6 border-b pb-4">
+            数据存储状态: 
+            <span id="user-id-display" class="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">本地存储 (Local Storage)</span>
+        </p>
+
+        <div id="main-content" class="space-y-10">
             
             <!-- 1. 菜单添加区 -->
             <section class="border border-indigo-200 rounded-xl p-4 bg-indigo-50">
@@ -91,40 +91,51 @@
 
     </div>
 
-    <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, addDoc, onSnapshot, collection, query, deleteDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
+    <script>
         // =================================================================
-        // 全局变量定义 (Global Variables)
+        // 本地存储操作 (Local Storage Operations)
         // =================================================================
-        // Firestore 强制要求使用的全局变量
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // LLM API 配置
-        const API_KEY = ""; // 保持为空，由运行时环境提供
-        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
+        const LOCAL_STORAGE_KEY = 'menuPlannerLocalData';
+        window.menuItems = []; 
+        window.currentFilter = 'All'; 
+
+        /**
+         * 从 localStorage 加载数据
+         * @returns {Array<Object>}
+         */
+        function loadLocalData() {
+            try {
+                const data = localStorage.getItem(LOCAL_STORAGE_KEY);
+                return data ? JSON.parse(data) : [];
+            } catch (e) {
+                console.error("加载本地数据失败:", e);
+                return [];
+            }
+        }
         
-        let db;
-        let auth;
-        let userId = null;
-        let isAuthReady = false;
-        window.menuItems = []; // 存储所有菜单项
-        window.currentFilter = 'All'; // 当前选中的分类过滤器
-
+        /**
+         * 保存数据到 localStorage 并更新 UI
+         * @param {Array<Object>} data - 要保存的数据
+         */
+        function saveLocalDataAndRefresh(data) {
+            try {
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
+                window.menuItems = data;
+                renderMenuItems(data, window.currentFilter);
+                renderCategoryFilters(data);
+            } catch (e) {
+                console.error("保存本地数据失败:", e);
+                displayMessage('save-message', '本地存储空间已满或发生错误！', 'error');
+            }
+        }
+        
         // =================================================================
         // 实用函数 (Utility Functions)
         // =================================================================
 
         /**
          * 显示错误或状态消息
-         * @param {string} elementId - 消息显示的 DOM 元素 ID
-         * @param {string} message - 要显示的消息
-         * @param {string} type - 'success', 'error', 'info'
          */
         function displayMessage(elementId, message, type = 'info') {
             const el = document.getElementById(elementId);
@@ -148,144 +159,41 @@
         }
 
         // =================================================================
-        // Firebase 初始化与认证 (Firebase Init & Auth)
+        // 数据操作 (Data Operations)
         // =================================================================
 
         /**
-         * 初始化 Firebase 应用并处理用户认证。
+         * 保存新菜肴到本地存储
          */
-        async function initializeFirebase() {
-            try {
-                // 启用 Firebase 日志
-                setLogLevel('debug'); 
-
-                // 1. 初始化 App 和 Services
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                window.db = db; // 挂载到 window 供外部 saveDish 调用
-
-                const loadingSpinner = document.getElementById('loading-spinner');
-                const mainContent = document.getElementById('main-content');
-                loadingSpinner.classList.remove('hidden');
-                mainContent.classList.add('hidden');
-
-                // 2. 身份验证：使用 Custom Token 或匿名登录
-                await new Promise(resolve => {
-                    // 监听认证状态变化，这是确保 userId 正确的关键
-                    onAuthStateChanged(auth, async (user) => {
-                        if (user) {
-                            userId = user.uid;
-                            document.getElementById('user-id-display').textContent = userId;
-                            isAuthReady = true;
-                            resolve();
-                        } else if (!isAuthReady) {
-                            // 如果是首次加载且没有用户，尝试登录
-                            try {
-                                if (initialAuthToken) {
-                                    await signInWithCustomToken(auth, initialAuthToken);
-                                } else {
-                                    await signInAnonymously(auth);
-                                }
-                            } catch (error) {
-                                console.error("Firebase 登录失败:", error);
-                                // 即使登录失败，也确保 isAuthReady 为 true，避免无限等待
-                                isAuthReady = true;
-                                userId = `anonymous-${crypto.randomUUID()}`; // 使用随机ID作为访客
-                                document.getElementById('user-id-display').textContent = '匿名登录失败';
-                                resolve();
-                            }
-                        }
-                    });
-                });
-                
-                // 3. 认证完成后，开始监听数据
-                if (isAuthReady) {
-                    loadingSpinner.classList.add('hidden');
-                    mainContent.classList.remove('hidden');
-                    listenForMenuItems();
-                }
-
-            } catch (error) {
-                console.error("初始化 Firebase 失败:", error);
-                document.getElementById('loading-spinner').innerHTML = `<p class="text-red-600">应用加载失败：${error.message}</p>`;
-            }
-        }
-        
-        window.addEventListener('load', initializeFirebase);
-
-        // =================================================================
-        // Firestore 数据操作 (Firestore Data Operations)
-        // =================================================================
-
-        /**
-         * 获取用户菜单集合的引用路径
-         * @returns {string} 集合路径
-         */
-        function getCollectionPath() {
-            if (!userId) {
-                throw new Error("用户未认证，无法获取集合路径。");
-            }
-            // 使用 private collection path
-            return `artifacts/${appId}/users/${userId}/menus`;
-        }
-
-        /**
-         * 监听菜单项的实时变化
-         */
-        function listenForMenuItems() {
-            if (!isAuthReady || !userId || !db) return;
-
-            const menuColRef = collection(db, getCollectionPath());
-            
-            // 使用 onSnapshot 实时监听数据变化
-            onSnapshot(menuColRef, (snapshot) => {
-                const fetchedItems = [];
-                snapshot.forEach(doc => {
-                    // 解构数据，并添加 Firestore document ID
-                    fetchedItems.push({ id: doc.id, ...doc.data() });
-                });
-                
-                window.menuItems = fetchedItems;
-                renderMenuItems(window.menuItems, window.currentFilter);
-                renderCategoryFilters(window.menuItems);
-            }, (error) => {
-                console.error("监听菜单数据失败:", error);
-            });
-        }
-
-        /**
-         * 保存新菜肴到 Firestore
-         */
-        window.saveDish = async function() {
+        window.saveDish = function() {
             const nameInput = document.getElementById('dish-name');
             const categoryInput = document.getElementById('dish-category');
             const name = nameInput.value.trim();
-            let category = categoryInput.value.trim();
+            // 统一转换为小写，便于筛选和匹配
+            let category = categoryInput.value.trim().toLowerCase() || '其他'; 
 
             if (!name) {
                 displayMessage('save-message', '菜名不能为空！', 'error');
                 return;
             }
-
-            // 默认分类
-            if (!category) {
-                category = '其他';
-            }
-
+            
             const newDish = {
+                // 使用时间戳作为唯一ID
+                id: Date.now().toString(), 
                 name: name,
-                category: category.toLowerCase(), // 统一转为小写便于搜索和分类
-                createdAt: new Date().toISOString(),
-                userId: userId
+                category: category,
+                createdAt: new Date().toISOString()
             };
 
             try {
-                const menuColRef = collection(db, getCollectionPath());
-                await addDoc(menuColRef, newDish);
+                const currentData = loadLocalData();
+                currentData.push(newDish);
+                saveLocalDataAndRefresh(currentData);
+
                 displayMessage('save-message', `${name} 保存成功！`, 'success');
                 nameInput.value = '';
                 categoryInput.value = '';
+
             } catch (error) {
                 console.error("保存菜肴失败:", error);
                 displayMessage('save-message', `保存失败: ${error.message}`, 'error');
@@ -293,21 +201,20 @@
         }
         
         /**
-         * 从 Firestore 中删除菜单项
-         * @param {string} dishId - 要删除的 Firestore 文档ID
+         * 从本地存储中删除菜单项
+         * @param {string} dishId - 要删除的唯一ID
          */
-        window.deleteDish = async function(dishId, dishName) {
-            try {
-                // 使用自定义模态框替代 alert/confirm
-                if (!confirm(`确定要删除菜单项 "${dishName}" 吗？`)) return;
+        window.deleteDish = function(dishId, dishName) {
+            // 使用标准的 JavaScript 确认框，在 Safari 上可以正常工作
+            if (!window.confirm(`确定要删除菜单项 "${dishName}" 吗？`)) return;
 
-                const docRef = doc(db, getCollectionPath(), dishId);
-                await deleteDoc(docRef);
-                console.log(`Successfully deleted dish: ${dishId}`);
-                // onSnapshot 会自动更新 UI
+            try {
+                const currentData = loadLocalData();
+                const updatedData = currentData.filter(item => item.id !== dishId);
+                saveLocalDataAndRefresh(updatedData);
             } catch (error) {
                 console.error("删除菜单项失败:", error);
-                displayMessage('save-message', '删除失败，请检查网络或权限。', 'error');
+                displayMessage('save-message', '删除失败，请检查浏览器设置。', 'error');
             }
         }
         
@@ -317,8 +224,6 @@
         
         /**
          * 根据当前筛选条件渲染菜单列表
-         * @param {Array<Object>} items - 所有菜单项
-         * @param {string} filter - 当前筛选的分类 ('All' 或具体分类名)
          */
         function renderMenuItems(items, filter) {
             const menuListEl = document.getElementById('menu-list');
@@ -342,6 +247,7 @@
             filteredItems.forEach(item => {
                 const div = document.createElement('div');
                 div.className = "flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200 transition duration-100 hover:shadow-sm";
+                // 使用 item.id 进行删除操作
                 div.innerHTML = `
                     <div class="flex-grow">
                         <span class="text-gray-900 font-medium">${item.name}</span>
@@ -359,13 +265,12 @@
         
         /**
          * 渲染分类筛选标签
-         * @param {Array<Object>} items - 所有菜单项
          */
         function renderCategoryFilters(items) {
             const container = document.getElementById('category-filter-container');
             container.innerHTML = '';
             
-            // 提取所有唯一分类
+            // 提取所有唯一分类，并首字母大写显示
             const categories = ['All', ...new Set(items.map(item => item.category))].map(c => c.charAt(0).toUpperCase() + c.slice(1));
             
             categories.forEach(category => {
@@ -382,8 +287,8 @@
                 
                 button.onclick = () => {
                     window.currentFilter = category;
-                    renderCategoryFilters(items); // 重新渲染标签以更新选中状态
-                    renderMenuItems(items, category); // 重新渲染菜单列表
+                    renderCategoryFilters(items); 
+                    renderMenuItems(items, category); 
                 };
                 
                 container.appendChild(button);
@@ -391,140 +296,120 @@
         }
 
         // =================================================================
-        // LLM 交互与推荐逻辑 (LLM Interaction & Recommendation)
+        // 随机推荐逻辑 (Random Recommendation Logic)
         // =================================================================
+        
+        /**
+         * 本地模式下的简单关键词匹配
+         */
+        function simpleLocalCategoryMatch(query, categories) {
+            const lowerQuery = query.toLowerCase();
+            
+            // 1. 尝试直接匹配用户输入是否包含任何已有的分类名
+            for (const category of categories) {
+                if (lowerQuery.includes(category)) {
+                    return category;
+                }
+            }
+            
+            // 2. 简单的关键词映射（映射到常见的分类名）
+            const keywordMap = {
+                '辣': '川菜', '清淡': '素食', '快': '快餐', '简单': '快餐',
+                '汤': '汤', '粥': '粥', '早': '早餐', '家常': '家常菜',
+                '饭': '主食', '肉': '荤菜', '鱼': '海鲜'
+            };
+            
+            for (const keyword in keywordMap) {
+                if (lowerQuery.includes(keyword)) {
+                    // 检查匹配到的分类是否存在于用户的分类列表中
+                    const matchedCategory = keywordMap[keyword].toLowerCase();
+                    if (categories.includes(matchedCategory)) {
+                         return matchedCategory;
+                    }
+                }
+            }
+            
+            // 3. 默认返回一个随机分类
+            const randomIndex = Math.floor(Math.random() * categories.length);
+            return categories[randomIndex];
+        }
 
         /**
-         * 处理用户的随机点餐请求，包括 LLM 交互
+         * 处理用户的随机点餐请求
          */
-        window.handleRecommendation = async function() {
+        window.handleRecommendation = function() {
             const queryInput = document.getElementById('recommendation-query');
             const resultEl = document.getElementById('recommendation-result');
             const recommendBtn = document.getElementById('recommend-button');
 
             const userQuery = queryInput.value.trim();
+            const items = window.menuItems;
+
             if (!userQuery) {
                 resultEl.innerHTML = '请输入你的要求，例如：我想吃点快速的晚餐。';
                 return;
             }
             
-            if (window.menuItems.length === 0) {
+            if (items.length === 0) {
                 resultEl.innerHTML = '请先添加菜单，我才能帮你推荐哦！';
                 return;
             }
 
             // 提取当前所有的分类
-            const availableCategories = [...new Set(window.menuItems.map(item => item.category))];
+            const allCategories = [...new Set(items.map(item => item.category))];
             
             recommendBtn.disabled = true;
             recommendBtn.textContent = '思考中... 请稍候...';
             resultEl.classList.remove('text-lg', 'font-medium');
-            resultEl.innerHTML = `<div class="animate-pulse text-sm text-green-600">正在分析您的需求，并从 ${availableCategories.length} 个分类中挑选...</div>`;
-
-            try {
-                // 1. 调用 LLM 匹配用户请求和最佳分类
-                const matchedCategory = await getCategoryMatchFromLLM(userQuery, availableCategories);
-                
-                // 2. 根据 LLM 结果进行本地随机选择
-                let filteredDishes = window.menuItems.filter(item => item.category === matchedCategory);
-                
-                // 如果 LLM 匹配的分类没有菜，则从所有菜中随机选一个作为备选
-                if (filteredDishes.length === 0) {
-                    filteredDishes = window.menuItems;
-                    console.warn(`LLM matched category '${matchedCategory}' but it has no dishes. Switching to full random.`);
-                }
-                
-                const randomIndex = Math.floor(Math.random() * filteredDishes.length);
-                const recommendation = filteredDishes[randomIndex];
-
-                // 3. 构造最终的推荐消息
-                const finalMessage = `
-                    <p class="text-xl font-extrabold text-green-700 mb-2">${recommendation.name}！</p>
-                    <p class="text-sm text-gray-600">
-                        ${matchedCategory === recommendation.category 
-                            ? `完美符合您的需求，菜品分类是：${recommendation.category}` 
-                            : `找不到匹配项，为您随机推荐了：${recommendation.category}`}
-                    </p>
-                `;
-
-                resultEl.classList.add('text-lg', 'font-medium');
-                resultEl.innerHTML = finalMessage;
-
-
-            } catch (error) {
-                console.error("推荐失败:", error);
-                resultEl.innerHTML = `<p class="text-red-500 text-sm">推荐失败：${error.message}。请检查您的菜单列表或稍后再试。</p>`;
-            } finally {
-                recommendBtn.disabled = false;
-                recommendBtn.textContent = '随机抽一个菜！🍽️';
+            
+            // 1. 关键词匹配最佳分类
+            const matchedCategory = simpleLocalCategoryMatch(userQuery, allCategories);
+            
+            // 2. 根据匹配结果进行本地随机选择
+            let filteredDishes = items.filter(item => item.category === matchedCategory);
+            
+            let isRandomFallback = false;
+            if (filteredDishes.length === 0) {
+                filteredDishes = items; // 备用：从所有菜中随机选一个
+                isRandomFallback = true;
             }
+            
+            const randomIndex = Math.floor(Math.random() * filteredDishes.length);
+            const recommendation = filteredDishes[randomIndex];
+
+            // 3. 构造最终的推荐消息
+            const finalMessage = `
+                <p class="text-xl font-extrabold text-green-700 mb-2">${recommendation.name}！</p>
+                <p class="text-sm text-gray-600">
+                    ${isRandomFallback
+                        ? `找不到匹配的 ${matchedCategory} 分类，为您从所有菜中随机推荐了：${recommendation.category}` 
+                        : `根据您的要求 (${matchedCategory}) 推荐，菜品分类是：${recommendation.category}`}
+                </p>
+            `;
+
+            resultEl.classList.add('text-lg', 'font-medium');
+            resultEl.innerHTML = finalMessage;
+            
+            recommendBtn.disabled = false;
+            recommendBtn.textContent = '随机抽一个菜！🍽️';
         }
+        
+        // =================================================================
+        // 初始化 (Initialization)
+        // =================================================================
 
         /**
-         * 调用 Gemini API，将用户输入映射到最合适的菜肴分类。
-         * @param {string} userQuery - 用户的自然语言查询
-         * @param {Array<string>} categories - 可用的分类列表
-         * @returns {Promise<string>} 匹配到的分类名
+         * 在页面加载完成后启动应用
          */
-        async function getCategoryMatchFromLLM(userQuery, categories) {
-            const systemPrompt = `你是一个专业的食谱匹配助手。你的任务是分析用户的自然语言请求，并从提供的分类列表中（${categories.join(', ')}）选择最匹配的一个。如果用户的请求与任何分类都不直接匹配，请选择一个最接近或最合理的分类。你必须**只**返回一个JSON对象。`;
-
-            const payload = {
-                contents: [{ parts: [{ text: `用户请求: ${userQuery}. 可用分类: ${categories.join(', ')}. 请选择最佳分类。` }] }],
-                systemInstruction: { parts: [{ text: systemPrompt }] },
-                generationConfig: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: "OBJECT",
-                        properties: {
-                            "matchedCategory": { 
-                                "type": "STRING", 
-                                "description": `从 [${categories.join(', ')}] 中选出的最佳匹配分类。` 
-                            }
-                        },
-                        required: ["matchedCategory"]
-                    }
-                }
-            };
-            
-            // 使用指数退避进行 API 调用
-            let responseJson = null;
-            const MAX_RETRIES = 3;
-            for (let i = 0; i < MAX_RETRIES; i++) {
-                try {
-                    const response = await fetch(API_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (!response.ok) {
-                        if (response.status === 429 && i < MAX_RETRIES - 1) {
-                            const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
-                            await new Promise(resolve => setTimeout(resolve, delay));
-                            continue; // Retry
-                        }
-                        throw new Error(`API response status: ${response.status}`);
-                    }
-                    
-                    responseJson = await response.json();
-                    break; // Success
-
-                } catch (error) {
-                    if (i === MAX_RETRIES - 1) throw error; // Re-throw on last attempt
-                }
-            }
-
-
-            const candidate = responseJson.candidates?.[0];
-            if (candidate && candidate.content?.parts?.[0]?.text) {
-                const jsonText = candidate.content.parts[0].text;
-                const parsedJson = JSON.parse(jsonText);
-                return parsedJson.matchedCategory.toLowerCase(); // 确保返回小写匹配本地数据
-            } else {
-                throw new Error("未能从AI获取有效的分类匹配结果。");
-            }
+        function initializeApp() {
+            // 加载本地数据并渲染UI
+            window.menuItems = loadLocalData(); 
+            renderMenuItems(window.menuItems, window.currentFilter);
+            renderCategoryFilters(window.menuItems);
         }
+        
+        // 确保在页面内容加载完毕后启动
+        window.addEventListener('load', initializeApp);
 
     </script>
 
