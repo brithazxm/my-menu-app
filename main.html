@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>骏骏大厨菜单～ - 纯原生JS版</title>
+    <title>骏骏的小厨房 - 共享菜单</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -32,6 +32,17 @@
             margin: 0;
             padding: 0;
         }
+        /* Simple wobble animation for recommendation */
+        @keyframes wobble {
+            0%, 100% { transform: scale(1); }
+            15% { transform: scale(1.05); }
+            30% { transform: scale(0.95); }
+            45% { transform: scale(1.02); }
+            60% { transform: scale(0.98); }
+        }
+        .animate-wobble {
+            animation: wobble 1s ease-in-out;
+        }
     </style>
 </head>
 
@@ -46,7 +57,7 @@
         // =================================================================
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, doc, addDoc, deleteDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, onSnapshot, doc, addDoc, deleteDoc, setLogLevel, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // 核心 Firebase 配置 (使用您提供的配置)
         const CUSTOM_FIREBASE_CONFIG = {
@@ -58,10 +69,17 @@
             appId: "1:107344539892:web:92fa634f2a2bd0710e2ea1"
         };
 
-        const APP_NAME = "骏骏大厨菜单～";
+        const APP_NAME = "骏骏的小厨房"; 
         const appId = CUSTOM_FIREBASE_CONFIG.projectId || 'shared-menu-app';
         const SHARED_COLLECTION_NAME = 'shared_menu_items';
         const getCollectionPath = () => `public/${appId}/${SHARED_COLLECTION_NAME}`;
+
+        // 固定菜品类型 (新增)
+        const DISH_TYPES = [
+            { key: 'Staple', label: '主食' },
+            { key: 'Hot', label: '热菜' },
+            { key: 'Cold', label: '凉菜' },
+        ];
 
         // 初始化 Firebase (设置日志级别为 Debug，以便查看连接详情)
         setLogLevel('debug'); 
@@ -74,10 +92,13 @@
         // =================================================================
         let userId = null;
         let menuItems = [];
-        let currentView = 'recommend'; // recommend, manage, add
+        let currentView = 'recommend'; 
+        let currentManageTab = 'All'; // All, Staple, Cold, Hot
+        let selectedCategoryTag = null; // null or a string tag for dynamic filtering
         let saveMessage = { text: '', type: 'info' };
         let isLoading = true;
         let connectionError = null;
+        let editingDishId = null; // ID of the dish being edited, or null
 
         // =================================================================
         // 辅助函数
@@ -85,8 +106,6 @@
 
         /**
          * 消息提示处理
-         * @param {string} text - 消息内容
-         * @param {string} type - 消息类型 ('success', 'error', 'info')
          */
         const handleSaveMessage = (text, type = 'info') => {
             saveMessage = { text, type };
@@ -99,7 +118,6 @@
 
         /**
          * 渲染图标
-         * @param {string} name - 图标名称
          */
         const renderIcon = (name, className = 'w-5 h-5') => {
             const icons = {
@@ -107,10 +125,60 @@
                 ListChecks: '<path d="M13 19h6"/><path d="M13 15h6"/><path d="M13 11h6"/><path d="M3 12l5-5 5 5"/><path d="M3 16h6"/>',
                 PlusCircle: '<circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="M8 12h8"/>',
                 Trash2: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+                Edit: '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>',
+                Save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>',
+                XCircle: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
                 DishIcon: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M9 13.5v.5c0 4.3 3 7.6 6.8 8.1l.2.1h.5a8.496 8.496 0 0 0 3.7-2.9L22 17"/><path d="M15 13.5v.5c0 4.3-3 7.6-6.8 8.1l-.2.1h-.5c-3 0-5.6-1.5-7.3-4.1l-1.3-2"/><path d="M3 3h20"/>'
             };
             const path = icons[name] || '';
             return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${className}">${path}</svg>`;
+        };
+        
+        // 菜单筛选核心逻辑 (更新为使用 item.type 和 item.tags)
+        const filterMenuItems = () => {
+            let filtered = menuItems;
+
+            // 1. 动态标签筛选 (优先级最高)
+            if (selectedCategoryTag) {
+                // 筛选包含特定标签的菜品
+                filtered = menuItems.filter(item => (item.tags || '').toLowerCase().includes(selectedCategoryTag.toLowerCase()));
+                return filtered;
+            }
+
+            // 2. 固定 Type 筛选
+            if (currentManageTab !== 'All') {
+                filtered = filtered.filter(item => item.type === currentManageTab);
+            }
+            
+            // 'All' Tab returns unfiltered list by default
+            return filtered;
+        };
+
+        // =================================================================
+        // Firebase CRUD (Update Dish)
+        // =================================================================
+
+        const updateDish = async (dishId, newName, newType, newTags) => {
+            if (!dishId || !newName || !newType) {
+                handleSaveMessage('更新失败：菜名和菜品类型都不能为空。', 'error');
+                return;
+            }
+            
+            try {
+                const docRef = doc(db, getCollectionPath(), dishId);
+                await updateDoc(docRef, {
+                    name: newName,
+                    type: newType, // 新增的固定类型
+                    tags: newTags.toLowerCase().trim(), // 现在的自定义标签
+                    updatedAt: new Date().toISOString()
+                });
+                handleSaveMessage(`"${newName}" 更新成功！`, 'success');
+                editingDishId = null; // 关闭编辑模式
+            } catch (error) {
+                console.error("更新菜肴失败:", error);
+                handleSaveMessage(`更新失败: ${error.message}`, 'error');
+            }
+            renderApp();
         };
 
 
@@ -121,12 +189,22 @@
         const renderAddView = () => {
             return `
                 <div class="space-y-8 p-6 bg-white rounded-2xl shadow-xl border border-[#D1C4E9]">
-                    <h2 class="text-2xl font-bold text-[#6D597A] border-b pb-3">${renderIcon('PlusCircle', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 录入新菜谱</h2>
-                    <p class="text-gray-600">将您的新菜品加入共享菜单库，方便日后点餐和管理。</p>
+                    <!-- 标题已更新 -->
+                    <h2 class="text-2xl font-bold text-[#6D597A] border-b pb-3">${renderIcon('PlusCircle', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 又加新菜啦</h2>
+                    <p class="text-gray-600">将您的新菜品加入共享菜单库，请同时选择类型并填写标签。</p>
 
                     <div class="space-y-5">
                         <input id="dishNameInput" type="text" placeholder="菜名 (例: 红烧肉)" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm" />
-                        <input id="dishCategoryInput" type="text" placeholder="分类 (例: 沪菜, 荤菜, 节日)" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm" />
+                        
+                        <!-- 新增：菜品类型选择 (Select) -->
+                        <select id="dishTypeInput" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm">
+                            <option value="" disabled selected>--- 请选择菜品类型 (主食/热菜/凉菜) ---</option>
+                            ${DISH_TYPES.map(t => `<option value="${t.key}">${t.label}</option>`).join('')}
+                        </select>
+
+                        <!-- 标签输入 (Tags) -->
+                        <input id="dishTagsInput" type="text" placeholder="分类标签 (例: 沪菜, 荤菜, 节日, 多个标签用逗号分隔)" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm" />
+                        
                         <button id="saveDishButton" class="w-full text-white font-extrabold tracking-wider py-4 rounded-xl shadow-lg transition duration-200 transform hover:scale-[1.01] bg-[#F0B2B2] hover:bg-[#E79696] active:bg-[#D98282] flex items-center justify-center">
                             ${renderIcon('PlusCircle', 'w-5 h-5 mr-2')}
                             保存新菜品
@@ -137,23 +215,103 @@
         };
 
         const renderManageView = () => {
-            const filteredItems = menuItems; 
+            // 固定 Tabs (基于 Type)
+            const fixedTabs = [
+                { key: 'All', label: '所有菜品' },
+                ...DISH_TYPES, // Staple, Cold, Hot
+            ];
 
+            // 1. 获取所有独特的分类标签 (基于 tags 字段)
+            const allTags = menuItems.flatMap(item => (item.tags || '').split(',').map(tag => tag.trim().toLowerCase())).filter(t => t);
+            const uniqueTags = [...new Set(allTags)].sort();
+            
+            // 2. 筛选后的菜单项
+            const filteredItems = filterMenuItems(); 
+            
+            // 3. 构建固定 Tab 导航
+            const fixedTabsHTML = fixedTabs.map(({ key, label }) => `
+                <button data-tab="${key}" class="manage-tab-btn flex-1 py-2 rounded-lg text-sm font-semibold transition duration-150 ${
+                    currentManageTab === key && !selectedCategoryTag
+                        ? 'bg-[#6D597A] text-white shadow-md' 
+                        : 'text-gray-600 hover:bg-[#D1C4E9]'
+                }">
+                    ${label}
+                </button>
+            `).join('');
+            
+            // 4. 构建动态标签列表
+            const dynamicTagsHTML = uniqueTags.map(tag => {
+                const isActive = selectedCategoryTag === tag;
+                return `
+                    <button data-tag="${tag}" class="tag-filter-btn px-3 py-1 text-xs font-medium rounded-full transition duration-150 shadow-sm ${
+                        isActive 
+                            ? 'bg-[#A8DADC] text-[#6D597A] font-bold shadow-lg' 
+                            : 'bg-[#F7F4F9] text-gray-700 hover:bg-[#D1C4E9]'
+                    }">
+                        #${tag}
+                    </button>
+                `;
+            }).join('');
+
+            // 5. 构建菜单列表（包含行内编辑功能）
             const menuListHTML = filteredItems.length === 0 
-                ? `<p class="text-gray-400 text-center py-10">请先添加菜肴到菜单库！</p>`
+                ? `<p class="text-gray-400 text-center py-10">找不到符合条件的菜肴。</p>`
                 : filteredItems.map(item => {
-                    const categoryDisplay = item.category.charAt(0).toUpperCase() + item.category.slice(1);
+                    // 显示固定类型
+                    const dishTypeLabel = DISH_TYPES.find(t => t.key === item.type)?.label || '未分类';
+                    // 显示动态标签
+                    const tagsArray = (item.tags || '').split(',').map(t => t.trim()).filter(t => t);
+                    const tagsHTML = tagsArray.map(tag => `<span class="mt-1 flex-shrink-0 inline-block text-xs font-medium bg-[#A8DADC]/40 text-[#6D597A] px-2 py-0.5 rounded-full">${tag}</span>`).join(' ');
+                    
+                    const isEditing = editingDishId === item.id;
+                    
+                    if (isEditing) {
+                        // 渲染编辑模式 (新增 Type Select)
+                        return `
+                            <div id="edit-form-${item.id}" class="bg-[#FFFDFB] p-4 rounded-xl border border-[#F0B2B2] shadow-2xl space-y-3">
+                                <p class="text-sm font-bold text-[#6D597A]">正在编辑: ${item.name}</p>
+                                <input data-id="${item.id}" id="edit-name-${item.id}" type="text" value="${item.name}" placeholder="菜名" class="w-full p-2 border border-[#F0B2B2]/50 rounded-lg focus:ring-[#F0B2B2] focus:border-[#F0B2B2] text-sm" />
+                                
+                                <!-- 编辑 Type Select -->
+                                <select data-id="${item.id}" id="edit-type-${item.id}" class="w-full p-2 border border-[#F0B2B2]/50 rounded-lg focus:ring-[#F0B2B2] focus:border-[#F0B2B2] text-sm">
+                                    ${DISH_TYPES.map(t => `<option value="${t.key}" ${item.type === t.key ? 'selected' : ''}>${t.label}</option>`).join('')}
+                                </select>
+
+                                <!-- 编辑 Tags Input -->
+                                <input data-id="${item.id}" id="edit-tags-${item.id}" type="text" value="${item.tags || ''}" placeholder="分类标签 (逗号分隔)" class="w-full p-2 border border-[#F0B2B2]/50 rounded-lg focus:ring-[#F0B2B2] focus:border-[#F0B2B2] text-sm" />
+                                
+                                <div class="flex justify-end space-x-2">
+                                    <button data-id="${item.id}" class="save-edit-btn text-white bg-[#A8DADC] hover:bg-[#87C7C7] text-sm font-bold py-2 px-4 rounded-lg flex items-center transition duration-150">
+                                        ${renderIcon('Save', 'w-4 h-4 mr-1')} 保存
+                                    </button>
+                                    <button data-id="${item.id}" class="cancel-edit-btn text-gray-500 bg-gray-100 hover:bg-gray-200 text-sm font-bold py-2 px-4 rounded-lg flex items-center transition duration-150">
+                                        ${renderIcon('XCircle', 'w-4 h-4 mr-1')} 取消
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    // 渲染普通模式 (显示 Type 和 Tags)
                     return `
                         <div class="flex justify-between items-center bg-white p-4 rounded-xl border border-[#D1C4E9] shadow-lg transition duration-150 hover:shadow-xl hover:bg-[#FDFCFD]">
                             <div class="flex-grow flex items-center justify-start min-w-0 space-x-3">
                                 ${renderIcon('DishIcon', 'w-6 h-6 text-[#F0B2B2] flex-shrink-0')}
                                 <div class="min-w-0">
                                     <span class="text-gray-900 font-bold text-lg truncate block">${item.name}</span>
-                                    <span class="mt-1 flex-shrink-0 inline-block text-xs font-medium bg-[#6D597A]/10 text-[#6D597A] px-3 py-0.5 rounded-full shadow-inner">${categoryDisplay}</span>
+                                    <div class="flex flex-wrap gap-1 mt-1">
+                                        <!-- 固定类型 Type 标签 -->
+                                        <span class="flex-shrink-0 inline-block text-xs font-bold bg-[#6D597A]/10 text-[#6D597A] px-3 py-0.5 rounded-full shadow-inner">${dishTypeLabel}</span>
+                                        <!-- 动态自定义 Tags 标签 -->
+                                        ${tagsHTML}
+                                    </div>
                                 </div>
                             </div>
                             
                             <div class="flex space-x-2 ml-4 flex-shrink-0">
+                                <button data-id="${item.id}" data-name="${item.name}" class="edit-dish-btn text-[#6D597A] hover:text-[#A8DADC] p-2 rounded-full hover:bg-gray-100 transition duration-150 shadow-sm" title="编辑菜肴">
+                                    ${renderIcon('Edit')}
+                                </button>
                                 <button data-id="${item.id}" data-name="${item.name}" class="delete-dish-btn text-red-500 hover:text-red-700 p-2 rounded-full hover:bg-red-100 transition duration-150 shadow-sm" title="删除菜肴">
                                     ${renderIcon('Trash2')}
                                 </button>
@@ -164,9 +322,28 @@
 
             return `
                 <div class="space-y-6 p-6 bg-white rounded-2xl shadow-xl border border-[#D1C4E9]">
-                    <h2 class="text-2xl font-bold text-[#6D597A]">${renderIcon('ListChecks', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 菜单库总览 (共 ${menuItems.length} 项)</h2>
+                    <h2 class="text-2xl font-bold text-[#6D597A]">${renderIcon('ListChecks', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 菜单库总览 (${filteredItems.length}/${menuItems.length} 项)</h2>
 
-                    <div class="space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                    <!-- 固定 Tab 导航 (基于 Type) -->
+                    <div class="flex p-1 bg-[#F7F4F9] rounded-xl shadow-inner mb-4 space-x-1">
+                        ${fixedTabsHTML}
+                    </div>
+
+                    <!-- 动态标签筛选 (基于 Tags) -->
+                    <div class="space-y-2">
+                        <p class="text-sm font-semibold text-gray-500">快速筛选标签 (Tags):</p>
+                        <div class="flex flex-wrap gap-2">
+                            <button data-tag="" class="tag-filter-btn px-3 py-1 text-xs font-medium rounded-full transition duration-150 shadow-sm ${
+                                !selectedCategoryTag ? 'bg-[#F0B2B2] text-white font-bold shadow-lg' : 'bg-[#F7F4F9] text-gray-700 hover:bg-[#D1C4E9]'
+                            }">
+                                #全部标签
+                            </button>
+                            ${dynamicTagsHTML}
+                        </div>
+                    </div>
+
+                    <!-- 菜品列表 -->
+                    <div class="space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar pt-4">
                         ${menuListHTML}
                     </div>
                 </div>
@@ -301,19 +478,49 @@
             document.querySelectorAll('.nav-button').forEach(button => {
                 button.onclick = () => {
                     currentView = button.dataset.view;
+                    selectedCategoryTag = null; // Reset tag filter on view change
+                    editingDishId = null; // Reset editing state
                     renderApp();
                 };
             });
+
+            // "管理"视图下的固定 Tab 筛选 (基于 Type)
+            document.querySelectorAll('.manage-tab-btn').forEach(button => {
+                button.onclick = () => {
+                    currentManageTab = button.dataset.tab;
+                    selectedCategoryTag = null; // Clear tag filter when using fixed tab
+                    editingDishId = null; 
+                    renderApp();
+                };
+            });
+            
+            // "管理"视图下的动态标签筛选 (基于 Tags)
+            document.querySelectorAll('.tag-filter-btn').forEach(button => {
+                button.onclick = () => {
+                    const tag = button.dataset.tag;
+                    if (!tag) { // #全部标签
+                        selectedCategoryTag = null;
+                        currentManageTab = 'All'; // Reset fixed tab to 'All'
+                    } else {
+                        selectedCategoryTag = tag;
+                        currentManageTab = 'All'; // Reset fixed tab to 'All'
+                    }
+                    editingDishId = null; 
+                    renderApp();
+                };
+            });
+
 
             // "添加菜品" 按钮逻辑
             const saveBtn = document.getElementById('saveDishButton');
             if (saveBtn) {
                 saveBtn.onclick = async () => {
                     const dishName = document.getElementById('dishNameInput').value.trim();
-                    const dishCategory = document.getElementById('dishCategoryInput').value.trim().toLowerCase() || '其他';
+                    const dishType = document.getElementById('dishTypeInput').value.trim(); // New Type
+                    const dishTags = document.getElementById('dishTagsInput').value.trim().toLowerCase(); // Tags
                     
-                    if (!dishName) {
-                        handleSaveMessage('菜名不能为空！', 'error');
+                    if (!dishName || !dishType) {
+                        handleSaveMessage('菜名和菜品类型都不能为空！', 'error');
                         return;
                     }
 
@@ -324,13 +531,15 @@
                         const menuColRef = collection(db, getCollectionPath());
                         await addDoc(menuColRef, {
                             name: dishName,
-                            category: dishCategory,
+                            type: dishType, // 新增：固定类型
+                            tags: dishTags, // 更新：自定义标签
                             createdAt: new Date().toISOString(),
                             addedBy: userId 
                         });
                         handleSaveMessage(`${dishName} 保存成功并已共享！`, 'success');
                         document.getElementById('dishNameInput').value = '';
-                        document.getElementById('dishCategoryInput').value = '';
+                        document.getElementById('dishTypeInput').value = ''; // 清空选择
+                        document.getElementById('dishTagsInput').value = '';
                     } catch (error) {
                         console.error("保存菜肴失败:", error);
                         handleSaveMessage(`保存失败: ${error.message}`, 'error');
@@ -340,6 +549,44 @@
                     }
                 };
             }
+            
+            // "编辑菜品" 按钮逻辑 (进入编辑模式)
+            document.querySelectorAll('.edit-dish-btn').forEach(button => {
+                button.onclick = () => {
+                    if (editingDishId === button.dataset.id) {
+                        editingDishId = null;
+                    } else {
+                        editingDishId = button.dataset.id;
+                    }
+                    renderApp(); 
+                };
+            });
+
+            // "取消编辑" 按钮逻辑
+            document.querySelectorAll('.cancel-edit-btn').forEach(button => {
+                button.onclick = () => {
+                    editingDishId = null;
+                    renderApp(); 
+                };
+            });
+            
+            // "保存编辑" 按钮逻辑 (执行更新操作)
+            document.querySelectorAll('.save-edit-btn').forEach(button => {
+                button.onclick = async () => {
+                    const dishId = button.dataset.id;
+                    const newName = document.getElementById(`edit-name-${dishId}`).value.trim();
+                    const newType = document.getElementById(`edit-type-${dishId}`).value.trim(); // New Type
+                    const newTags = document.getElementById(`edit-tags-${dishId}`).value.trim(); // New Tags
+                    
+                    // 临时禁用所有按钮，防止重复提交
+                    document.querySelectorAll('.save-edit-btn').forEach(btn => btn.disabled = true);
+                    
+                    await updateDish(dishId, newName, newType, newTags);
+                    
+                    // 重新启用按钮（重新渲染会处理）
+                    document.querySelectorAll('.save-edit-btn').forEach(btn => btn.disabled = false);
+                };
+            });
 
             // "删除菜品" 按钮逻辑
             document.querySelectorAll('.delete-dish-btn').forEach(button => {
@@ -347,12 +594,14 @@
                     const dishId = button.dataset.id;
                     const dishName = button.dataset.name;
                     
-                    if (!window.confirm(`确定要永久删除菜单项 "${dishName}" 吗？`)) return;
+                    if (!window.confirm(`【确认删除】您确定要永久删除菜单项 "${dishName}" 吗？此操作不可撤销。`)) return;
+
 
                     try {
                         const docRef = doc(db, getCollectionPath(), dishId);
                         await deleteDoc(docRef);
                         handleSaveMessage(`${dishName} 已从共享列表中永久删除。`, 'success');
+                        editingDishId = null; 
                     } catch (error) {
                         console.error("删除菜单项失败:", error);
                         handleSaveMessage('删除失败，请检查网络或权限。', 'error');
@@ -376,14 +625,14 @@
                     
                     const randomIndex = Math.floor(Math.random() * menuItems.length);
                     const dish = menuItems[randomIndex];
-                    const categoryDisplay = dish.category.charAt(0).toUpperCase() + dish.category.slice(1);
+                    const dishTypeLabel = DISH_TYPES.find(t => t.key === dish.type)?.label || '未分类';
                     
                     const resultEl = document.getElementById('recommendationResult');
                     if (resultEl) {
                          resultEl.innerHTML = `
-                            <p class="text-4xl font-extrabold text-[#F0B2B2] mb-2 animate-bounce">${dish.name}！</p>
+                            <p class="text-4xl font-extrabold text-[#F0B2B2] mb-2 animate-wobble">${dish.name}！</p>
                             <p class="text-base text-gray-700">
-                                所属分类：<span class="font-semibold text-[#6D597A]">${categoryDisplay}</span>
+                                菜品类型：<span class="font-semibold text-[#6D597A]">${dishTypeLabel}</span>
                             </p>
                             <p class="text-xs text-gray-500 mt-1">(从所有菜品中随机挑选)</p>
                          `;
@@ -445,6 +694,7 @@
                     onSnapshot(menuColRef, (snapshot) => {
                         menuItems = [];
                         snapshot.forEach(doc => {
+                            // 注意：现在从 doc.data() 中获取 type 和 tags 字段
                             menuItems.push({ id: doc.id, ...doc.data() });
                         });
                         // 每次数据更新都重新渲染
