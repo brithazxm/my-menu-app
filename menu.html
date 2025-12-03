@@ -104,19 +104,29 @@
         // =================================================================
         // 全局变量定义与配置 (Global Variables & Config)
         // =================================================================
-        // 外部环境通常没有这些变量，我们提供默认值让它能运行在任何地方
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'shared-menu-app';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const SHARED_COLLECTION_NAME = 'shared_menu_items'; // 所有人共享的集合名称
 
-        // LLM API 配置 (保持不变，以备环境支持)
-        const API_KEY = ""; 
-        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
-        const hasLLMKey = typeof API_KEY !== 'undefined' && API_KEY !== "";
+        // --------------------------------------------------------------------------------
+        // !!! IMPORTANT: 请在这里粘贴您从 Firebase 控制台获取的配置对象 !!!
+        // --------------------------------------------------------------------------------
+        const CUSTOM_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyB3o6MKpxCz1HvgR2k8wpDF9GDtMtZD3dc",
+            authDomain: "junjunmenu.firebaseapp.com",
+            projectId: "junjunmenu",
+            storageBucket: "junjunmenu.firebasestorage.app",
+            messagingSenderId: "107344539892",
+            appId: "1:107344539892:web:92fa634f2a2bd0710e2ea1"
+        };
+        // --------------------------------------------------------------------------------
+        // --------------------------------------------------------------------------------
+
+        const appId = CUSTOM_FIREBASE_CONFIG.projectId || 'shared-menu-app';
+        const firebaseConfig = CUSTOM_FIREBASE_CONFIG;
+        // 使用一个公共的集合名称，确保所有人共享数据
+        const SHARED_COLLECTION_NAME = 'shared_menu_items'; 
         
         let db;
         let auth;
-        let userId = null; // 用户ID用于认证，但数据存储在公共路径
+        let userId = null; 
         let isAppReady = false;
         window.menuItems = []; 
         window.currentFilter = 'All'; 
@@ -151,11 +161,10 @@
 
         /**
          * 获取公共菜单集合的引用路径
-         * @returns {string} 公共集合路径
          */
         function getCollectionPath() {
-            // 使用公共路径: /artifacts/{appId}/public/data/{your_collection_name}
-            return `artifacts/${appId}/public/data/${SHARED_COLLECTION_NAME}`;
+            // 在您自己的 Firebase 中，我们使用这种简单且公开的路径来存储数据
+            return `public/${appId}/${SHARED_COLLECTION_NAME}`;
         }
 
         /**
@@ -163,10 +172,12 @@
          */
         async function initializeFirebase() {
             try {
-                // 确保 Firebase 配置存在
-                if (!firebaseConfig || !firebaseConfig.projectId) {
-                     // 外部环境如果缺乏配置，则直接提示错误并停止
-                     document.getElementById('loading-spinner').innerHTML = `<p class="text-red-600 font-bold">错误：此版本需要云端配置。请在 Canvas 环境中运行，或联系管理员。</p>`;
+                // 1. 检查配置是否已粘贴
+                if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
+                     document.getElementById('loading-spinner').innerHTML = `
+                        <p class="text-red-600 font-bold">错误：配置缺失。</p>
+                        <p class="text-red-600">请按照指南，将您的 Firebase 配置密钥粘贴到代码中的 CUSTOM_FIREBASE_CONFIG 部分。</p>
+                     `;
                      return;
                 }
 
@@ -176,12 +187,13 @@
                 auth = getAuth(app);
                 window.db = db; 
 
-                // 2. 身份验证：使用匿名登录，保证所有用户都能读写公共数据
+                // 2. 身份验证：使用匿名登录
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
-                        // 用户已认证（无论是否匿名）
                         userId = user.uid;
-                        document.getElementById('user-id-display').textContent = '云端连接成功 (ID: ' + userId.substring(0, 8) + '...)';
+                        const userIdDisplay = document.getElementById('user-id-display');
+                        // 显示用户ID的前8位，用于标识
+                        userIdDisplay.textContent = '云端连接成功 (ID: ' + userId.substring(0, 8) + '... | 共享)'; 
                         isAppReady = true;
 
                         // 3. 认证完成后，开始监听数据
@@ -194,7 +206,7 @@
                             await signInAnonymously(auth);
                         } catch (error) {
                             console.error("Firebase 匿名登录失败:", error);
-                            document.getElementById('loading-spinner').innerHTML = `<p class="text-red-600">认证失败，无法连接数据库。</p>`;
+                            document.getElementById('loading-spinner').innerHTML = `<p class="text-red-600">认证失败，请检查您的 Firebase 匿名登录是否已启用。</p>`;
                         }
                     }
                 });
@@ -232,7 +244,6 @@
                 renderCategoryFilters(window.menuItems);
             }, (error) => {
                 console.error("监听菜单数据失败:", error);
-                // 如果监听失败，可能是权限问题或网络问题，但应用不会卡死
                 displayMessage('save-message', '实时连接失败，请刷新重试。', 'error');
             });
         }
@@ -260,7 +271,7 @@
                 name: name,
                 category: category, 
                 createdAt: new Date().toISOString(),
-                addedBy: userId // 记录是哪个用户添加的（可选）
+                addedBy: userId 
             };
 
             try {
@@ -371,7 +382,7 @@
         }
 
         // =================================================================
-        // LLM/随机推荐逻辑 (LLM/Random Recommendation Logic - Fallback Mode)
+        // 随机推荐逻辑 (Random Recommendation Logic - Fallback Mode)
         // =================================================================
         
         /**
