@@ -74,7 +74,7 @@
         const SHARED_COLLECTION_NAME = 'shared_menu_items';
         const getCollectionPath = () => `public/${appId}/${SHARED_COLLECTION_NAME}`;
 
-        // 固定菜品类型 (新增)
+        // 固定菜品类型
         const DISH_TYPES = [
             { key: 'Staple', label: '主食' },
             { key: 'Hot', label: '热菜' },
@@ -134,14 +134,20 @@
             return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${className}">${path}</svg>`;
         };
         
-        // 菜单筛选核心逻辑 (更新为使用 item.type 和 item.tags)
+        /**
+         * 菜单筛选核心逻辑 - 已更新为使用空格分隔标签
+         */
         const filterMenuItems = () => {
             let filtered = menuItems;
 
             // 1. 动态标签筛选 (优先级最高)
             if (selectedCategoryTag) {
-                // 筛选包含特定标签的菜品
-                filtered = menuItems.filter(item => (item.tags || '').toLowerCase().includes(selectedCategoryTag.toLowerCase()));
+                const normalizedFilterTag = selectedCategoryTag.toLowerCase();
+                filtered = menuItems.filter(item => {
+                    // 拆分 item 的 tags (使用空格), 并检查是否包含完整的筛选标签
+                    const itemTagsArray = (item.tags || '').toLowerCase().split(' ').filter(t => t);
+                    return itemTagsArray.includes(normalizedFilterTag);
+                });
                 return filtered;
             }
 
@@ -169,7 +175,7 @@
                 await updateDoc(docRef, {
                     name: newName,
                     type: newType, // 新增的固定类型
-                    tags: newTags.toLowerCase().trim(), // 现在的自定义标签
+                    tags: newTags.toLowerCase().trim(), // 现在的自定义标签 (保存为以空格分隔的字符串)
                     updatedAt: new Date().toISOString()
                 });
                 handleSaveMessage(`"${newName}" 更新成功！`, 'success');
@@ -196,14 +202,14 @@
                     <div class="space-y-5">
                         <input id="dishNameInput" type="text" placeholder="菜名 (例: 红烧肉)" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm" />
                         
-                        <!-- 新增：菜品类型选择 (Select) -->
+                        <!-- 菜品类型选择 (Select) -->
                         <select id="dishTypeInput" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm">
                             <option value="" disabled selected>--- 请选择菜品类型 (主食/热菜/凉菜) ---</option>
                             ${DISH_TYPES.map(t => `<option value="${t.key}">${t.label}</option>`).join('')}
                         </select>
 
-                        <!-- 标签输入 (Tags) -->
-                        <input id="dishTagsInput" type="text" placeholder="分类标签 (例: 沪菜, 荤菜, 节日, 多个标签用逗号分隔)" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm" />
+                        <!-- 标签输入 (Tags) - 提示已更新为“空格分隔” -->
+                        <input id="dishTagsInput" type="text" placeholder="分类标签 (例: 沪菜 荤菜 节日, 多个标签用空格分隔)" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm" />
                         
                         <button id="saveDishButton" class="w-full text-white font-extrabold tracking-wider py-4 rounded-xl shadow-lg transition duration-200 transform hover:scale-[1.01] bg-[#F0B2B2] hover:bg-[#E79696] active:bg-[#D98282] flex items-center justify-center">
                             ${renderIcon('PlusCircle', 'w-5 h-5 mr-2')}
@@ -221,8 +227,8 @@
                 ...DISH_TYPES, // Staple, Cold, Hot
             ];
 
-            // 1. 获取所有独特的分类标签 (基于 tags 字段)
-            const allTags = menuItems.flatMap(item => (item.tags || '').split(',').map(tag => tag.trim().toLowerCase())).filter(t => t);
+            // 1. 获取所有独特的分类标签 (基于 tags 字段) - 使用空格分隔
+            const allTags = menuItems.flatMap(item => (item.tags || '').split(' ').map(tag => tag.trim().toLowerCase())).filter(t => t);
             const uniqueTags = [...new Set(allTags)].sort();
             
             // 2. 筛选后的菜单项
@@ -259,8 +265,8 @@
                 : filteredItems.map(item => {
                     // 显示固定类型
                     const dishTypeLabel = DISH_TYPES.find(t => t.key === item.type)?.label || '未分类';
-                    // 显示动态标签
-                    const tagsArray = (item.tags || '').split(',').map(t => t.trim()).filter(t => t);
+                    // 显示动态标签 - 使用空格分隔
+                    const tagsArray = (item.tags || '').split(' ').map(t => t.trim()).filter(t => t);
                     const tagsHTML = tagsArray.map(tag => `<span class="mt-1 flex-shrink-0 inline-block text-xs font-medium bg-[#A8DADC]/40 text-[#6D597A] px-2 py-0.5 rounded-full">${tag}</span>`).join(' ');
                     
                     const isEditing = editingDishId === item.id;
@@ -277,8 +283,8 @@
                                     ${DISH_TYPES.map(t => `<option value="${t.key}" ${item.type === t.key ? 'selected' : ''}>${t.label}</option>`).join('')}
                                 </select>
 
-                                <!-- 编辑 Tags Input -->
-                                <input data-id="${item.id}" id="edit-tags-${item.id}" type="text" value="${item.tags || ''}" placeholder="分类标签 (逗号分隔)" class="w-full p-2 border border-[#F0B2B2]/50 rounded-lg focus:ring-[#F0B2B2] focus:border-[#F0B2B2] text-sm" />
+                                <!-- 编辑 Tags Input - 提示已更新为“空格分隔” -->
+                                <input data-id="${item.id}" id="edit-tags-${item.id}" type="text" value="${item.tags || ''}" placeholder="分类标签 (空格分隔)" class="w-full p-2 border border-[#F0B2B2]/50 rounded-lg focus:ring-[#F0B2B2] focus:border-[#F0B2B2] text-sm" />
                                 
                                 <div class="flex justify-end space-x-2">
                                     <button data-id="${item.id}" class="save-edit-btn text-white bg-[#A8DADC] hover:bg-[#87C7C7] text-sm font-bold py-2 px-4 rounded-lg flex items-center transition duration-150">
@@ -517,7 +523,7 @@
                 saveBtn.onclick = async () => {
                     const dishName = document.getElementById('dishNameInput').value.trim();
                     const dishType = document.getElementById('dishTypeInput').value.trim(); // New Type
-                    const dishTags = document.getElementById('dishTagsInput').value.trim().toLowerCase(); // Tags
+                    const dishTags = document.getElementById('dishTagsInput').value.trim().toLowerCase(); // Tags (space-separated string)
                     
                     if (!dishName || !dishType) {
                         handleSaveMessage('菜名和菜品类型都不能为空！', 'error');
@@ -532,7 +538,7 @@
                         await addDoc(menuColRef, {
                             name: dishName,
                             type: dishType, // 新增：固定类型
-                            tags: dishTags, // 更新：自定义标签
+                            tags: dishTags, // 更新：自定义标签 (已转换为小写并清除首尾空格)
                             createdAt: new Date().toISOString(),
                             addedBy: userId 
                         });
