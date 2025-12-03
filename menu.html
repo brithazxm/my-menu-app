@@ -23,6 +23,10 @@
             background-color: #a5b4fc;
             border-radius: 2px;
         }
+        /* 隐藏删除时的确认框 */
+        .custom-confirm-modal {
+            /* ... 替换 window.confirm 的样式，这里仅为示意 */
+        }
     </style>
 </head>
 <body class="p-4 sm:p-8">
@@ -76,9 +80,9 @@
                 </div>
             </section>
             
-            <!-- 3. 已保存菜单概览 -->
+            <!-- 3. 已保存菜单概览 (查看、编辑和删除都在这里) -->
             <section>
-                <h2 class="text-xl font-bold text-gray-700 mb-4">📖 已保存的菜单 (<span id="menu-count">0</span> 项)</h2>
+                <h2 class="text-xl font-bold text-gray-700 mb-4">📖 已保存的菜单 (共 <span id="menu-count">0</span> 项 | 实时更新)</h2>
                 
                 <!-- 分类标签和过滤 -->
                 <div id="category-filter-container" class="flex flex-wrap gap-2 mb-4 custom-scrollbar overflow-x-auto pb-2">
@@ -97,9 +101,10 @@
 
     <!-- Firebase SDKs -->
     <script type="module">
+        // 导入 Firebase 核心功能和 Firestore 数据操作
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, addDoc, onSnapshot, collection, deleteDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, addDoc, onSnapshot, collection, deleteDoc, updateDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================
         // 全局变量定义与配置 (Global Variables & Config)
@@ -154,7 +159,7 @@
                 el.className = 'text-sm text-center pt-1';
             }, 3000);
         }
-
+        
         // =================================================================
         // Firebase 初始化与公共认证 (Firebase Init & Public Auth)
         // =================================================================
@@ -172,7 +177,6 @@
          */
         async function initializeFirebase() {
             try {
-                // 1. 检查配置是否已粘贴
                 if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
                      document.getElementById('loading-spinner').innerHTML = `
                         <p class="text-red-600 font-bold">错误：配置缺失。</p>
@@ -231,7 +235,6 @@
 
             const menuColRef = collection(db, getCollectionPath());
             
-            // 使用 onSnapshot 实时监听数据变化
             onSnapshot(menuColRef, (snapshot) => {
                 const fetchedItems = [];
                 snapshot.forEach(doc => {
@@ -252,6 +255,7 @@
          * 保存新菜肴到 Firestore
          */
         window.saveDish = async function() {
+            // ... (saveDish 逻辑不变)
             if (!isAppReady || !db) {
                 displayMessage('save-message', '应用未准备就绪，请稍候。', 'error');
                 return;
@@ -292,25 +296,94 @@
         window.deleteDish = async function(dishId, dishName) {
             if (!isAppReady || !db) return;
 
-            // 使用自定义模态框替代 alert/confirm
-            if (!confirm(`确定要删除菜单项 "${dishName}" 吗？该操作将从共享列表中移除。`)) return;
+            if (!confirm(`确定要永久删除菜单项 "${dishName}" 吗？该操作将从共享列表中移除。`)) return;
 
             try {
                 const docRef = doc(db, getCollectionPath(), dishId);
                 await deleteDoc(docRef);
-                displayMessage('save-message', `${dishName} 已从共享列表中删除。`, 'success');
+                displayMessage('save-message', `${dishName} 已从共享列表中永久删除。`, 'success');
             } catch (error) {
                 console.error("删除菜单项失败:", error);
                 displayMessage('save-message', '删除失败，请检查网络或权限。', 'error');
             }
         }
         
+        /**
+         * 更新 Firestore 中的菜肴数据
+         */
+        window.updateDish = async function(dishId) {
+            if (!isAppReady || !db) {
+                displayMessage('save-message', '应用未准备就绪，请稍候。', 'error');
+                return;
+            }
+
+            const nameInput = document.getElementById(`edit-name-${dishId}`);
+            const categoryInput = document.getElementById(`edit-category-${dishId}`);
+            const newName = nameInput.value.trim();
+            const newCategory = categoryInput.value.trim().toLowerCase() || '其他';
+            
+            if (!newName) {
+                displayMessage('save-message', '菜名不能为空！', 'error');
+                return;
+            }
+
+            try {
+                const docRef = doc(db, getCollectionPath(), dishId);
+                await updateDoc(docRef, {
+                    name: newName,
+                    category: newCategory
+                });
+
+                // 更新成功后，切换回显示模式
+                window.toggleEdit(dishId, false);
+                displayMessage('save-message', `${newName} 已成功更新并共享！`, 'success');
+            } catch (error) {
+                console.error("更新菜肴失败:", error);
+                displayMessage('save-message', `更新失败: ${error.message}`, 'error');
+            }
+        }
+        
         // =================================================================
-        // UI 渲染 (UI Rendering)
+        // UI 交互与渲染 (UI Interaction & Rendering)
         // =================================================================
+
+        /**
+         * 切换菜单项的编辑/显示模式
+         * @param {string} dishId - 文档ID
+         * @param {boolean} enableEdit - true 启用编辑模式，false 禁用/取消
+         */
+        window.toggleEdit = function(dishId, enableEdit) {
+            const displayEl = document.getElementById(`display-mode-${dishId}`);
+            const editEl = document.getElementById(`edit-mode-${dishId}`);
+            const displayActionsEl = document.getElementById(`display-actions-${dishId}`);
+            const editActionsEl = document.getElementById(`edit-actions-${dishId}`);
+            
+            if (enableEdit) {
+                // 启用编辑模式
+                displayEl.classList.add('hidden');
+                displayActionsEl.classList.add('hidden');
+                editEl.classList.remove('hidden');
+                editActionsEl.classList.remove('hidden');
+                
+                // 确保输入框值是当前显示的值
+                const item = window.menuItems.find(i => i.id === dishId);
+                if (item) {
+                     document.getElementById(`edit-name-${dishId}`).value = item.name;
+                     document.getElementById(`edit-category-${dishId}`).value = item.category;
+                     document.getElementById(`edit-name-${dishId}`).focus();
+                }
+            } else {
+                // 禁用/取消编辑模式
+                editEl.classList.add('hidden');
+                editActionsEl.classList.add('hidden');
+                displayEl.classList.remove('hidden');
+                displayActionsEl.classList.remove('hidden');
+                // 取消时不进行数据更新
+            }
+        }
         
         /**
-         * 渲染菜单列表
+         * 渲染菜单列表 (已添加编辑功能)
          */
         function renderMenuItems(items, filter) {
             const menuListEl = document.getElementById('menu-list');
@@ -325,7 +398,13 @@
 
             menuCountEl.textContent = items.length;
             
-            if (filteredItems.length === 0) {
+            if (filteredItems.length === 0 && items.length > 0 && filter !== 'All') {
+                // 如果有数据但筛选后为空
+                emptyMessageEl.textContent = `在分类 "${filter}" 下没有找到菜肴。`;
+                emptyMessageEl.classList.remove('hidden');
+            } else if (items.length === 0) {
+                 // 如果完全没有数据
+                emptyMessageEl.textContent = `您还没有添加任何菜肴！`;
                 emptyMessageEl.classList.remove('hidden');
             } else {
                 emptyMessageEl.classList.add('hidden');
@@ -334,17 +413,62 @@
             filteredItems.forEach(item => {
                 const categoryDisplay = item.category.charAt(0).toUpperCase() + item.category.slice(1);
                 const div = document.createElement('div');
-                div.className = "flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200 transition duration-100 hover:shadow-sm";
+                div.id = `dish-row-${item.id}`; // Add ID for toggling
+                div.className = "flex justify-between items-start bg-gray-50 p-3 rounded-lg border border-gray-200 transition duration-100 hover:shadow-sm";
+
                 div.innerHTML = `
-                    <div class="flex-grow">
-                        <span class="text-gray-900 font-medium">${item.name}</span>
-                        <span class="ml-3 inline-block text-xs font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">${categoryDisplay}</span>
+                    <!-- 1. Display Mode (默认显示) -->
+                    <div id="display-mode-${item.id}" class="flex-grow flex flex-col sm:flex-row sm:items-center justify-start min-w-0">
+                        <span class="text-gray-900 font-medium truncate">${item.name}</span>
+                        <span class="mt-1 sm:mt-0 ml-0 sm:ml-4 flex-shrink-0 inline-block text-xs font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">${categoryDisplay}</span>
                     </div>
-                    <button onclick="deleteDish('${item.id}', '${item.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100 transition duration-150">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 10-2 0v6a1 1 0 102 0V8z" clip-rule="evenodd" />
-                        </svg>
-                    </button>
+
+                    <!-- 2. Edit Mode (默认隐藏) -->
+                    <div id="edit-mode-${item.id}" class="hidden flex-grow space-y-2 sm:space-y-0 sm:space-x-3 sm:flex min-w-0">
+                        <input type="text" id="edit-name-${item.id}" value="${item.name.replace(/"/g, '&quot;')}" 
+                               class="w-full sm:w-1/2 p-2 text-sm border border-indigo-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 min-w-0"/>
+                        <input type="text" id="edit-category-${item.id}" value="${item.category.replace(/"/g, '&quot;')}" 
+                               class="w-full sm:w-1/3 p-2 text-sm border border-indigo-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 min-w-0"/>
+                    </div>
+
+                    <!-- 3. Actions -->
+                    <div class="flex space-x-2 ml-4 flex-shrink-0">
+                        <!-- Display Actions (Edit and Delete Buttons) -->
+                        <div id="display-actions-${item.id}" class="flex space-x-2">
+                            <button onclick="toggleEdit('${item.id}', true)" 
+                                    class="text-blue-500 hover:text-blue-700 p-1 rounded-full hover:bg-blue-100 transition duration-150" 
+                                    title="编辑菜肴">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zm-3.22 3.22L7.382 9.474 5.315 8.16l2.164-2.164 2.828 2.828z" />
+                                </svg>
+                            </button>
+                            <button onclick="deleteDish('${item.id}', '${item.name.replace(/'/g, "\\'")}')" 
+                                    class="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100 transition duration-150" 
+                                    title="删除菜肴">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 10-2 0v6a1 1 0 102 0V8z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                        </div>
+                        
+                        <!-- Edit Actions (Save/Cancel Buttons) -->
+                        <div id="edit-actions-${item.id}" class="hidden flex space-x-2">
+                            <button onclick="updateDish('${item.id}')" 
+                                    class="text-green-500 hover:text-green-700 p-1 rounded-full hover:bg-green-100 transition duration-150" 
+                                    title="保存更改">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                            <button onclick="toggleEdit('${item.id}', false)" 
+                                    class="text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-100 transition duration-150" 
+                                    title="取消编辑">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
                 `;
                 menuListEl.appendChild(div);
             });
@@ -405,7 +529,6 @@
                 }
             }
             
-            // 默认随机选择一个分类
             const randomIndex = Math.floor(Math.random() * categories.length);
             return categories[randomIndex] || '其他';
         }
@@ -425,30 +548,25 @@
                  resultEl.innerHTML = '请等待应用连接到云端。';
                  return;
             }
-            if (!userQuery) {
-                resultEl.innerHTML = '请输入你的要求，例如：我想吃点快速的晚餐。';
-                return;
-            }
             if (items.length === 0) {
                 resultEl.innerHTML = '请先添加菜单，我才能帮你推荐哦！';
                 return;
             }
-
-            const allCategories = [...new Set(items.map(item => item.category))];
             
+            // 启用加载状态
             recommendBtn.disabled = true;
             recommendBtn.textContent = '思考中... 请稍候...';
             resultEl.classList.remove('text-lg', 'font-medium');
-            resultEl.innerHTML = `<div class="animate-pulse text-sm text-green-600">正在从 ${allCategories.length} 个分类中挑选...</div>`;
+            resultEl.innerHTML = `<div class="animate-pulse text-sm text-green-600">正在从菜单中挑选...</div>`;
             
-            // 在此公共共享版本中，我们默认使用简单的本地匹配逻辑
+            const allCategories = [...new Set(items.map(item => item.category))];
             const matchedCategory = simpleLocalCategoryMatch(userQuery, allCategories);
             
             let filteredDishes = items.filter(item => item.category === matchedCategory);
             
             let isRandomFallback = false;
-            if (filteredDishes.length === 0) {
-                filteredDishes = items; 
+            if (filteredDishes.length === 0 || !userQuery) {
+                filteredDishes = items; // 如果没有输入或没有匹配，则从所有菜单中随机选
                 isRandomFallback = true;
             }
             
@@ -458,17 +576,21 @@
             const finalMessage = `
                 <p class="text-xl font-extrabold text-green-700 mb-2">${recommendation.name}！</p>
                 <p class="text-sm text-gray-600">
-                    ${isRandomFallback
-                        ? `找不到匹配的分类，为您随机推荐了：${recommendation.category.charAt(0).toUpperCase() + recommendation.category.slice(1)}` 
+                    ${isRandomFallback && userQuery
+                        ? `无法精确匹配您的要求，为您随机推荐了：${recommendation.category.charAt(0).toUpperCase() + recommendation.category.slice(1)}`
+                        : isRandomFallback && !userQuery
+                        ? `为您随机推荐了：${recommendation.category.charAt(0).toUpperCase() + recommendation.category.slice(1)}` 
                         : `根据您的要求 (${matchedCategory.charAt(0).toUpperCase() + matchedCategory.slice(1)}) 推荐，菜品分类是：${recommendation.category.charAt(0).toUpperCase() + recommendation.category.slice(1)}`}
                 </p>
             `;
 
-            resultEl.classList.add('text-lg', 'font-medium');
-            resultEl.innerHTML = finalMessage;
-            
-            recommendBtn.disabled = false;
-            recommendBtn.textContent = '随机抽一个菜！🍽️';
+            // 恢复状态
+            setTimeout(() => {
+                resultEl.classList.add('text-lg', 'font-medium');
+                resultEl.innerHTML = finalMessage;
+                recommendBtn.disabled = false;
+                recommendBtn.textContent = '随机抽一个菜！🍽️';
+            }, 800); // 模拟思考时间
         }
 
     </script>
