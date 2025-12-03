@@ -3,21 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>智能菜单规划与随机点餐 - 本地版</title>
-    <!-- 引入 Tailwind CSS 以实现快速、响应式的移动端界面设计 -->
+    <title>公共共享菜单规划与点餐</title>
+    <!-- 引入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* 引入 Inter 字体以获得现代感和更好的移动端显示 */
+        /* 字体和基本样式 */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f7f9fb;
         }
-        /* 强制主容器在小屏幕上占满宽度并确保高度足够 */
         #app-container {
             min-height: 100vh;
         }
-        /* 自定义滚动条样式，用于菜单列表 */
         .custom-scrollbar::-webkit-scrollbar {
             width: 4px;
         }
@@ -31,19 +29,25 @@
 
     <div id="app-container" class="w-full max-w-2xl mx-auto bg-white shadow-2xl rounded-2xl p-6 sm:p-8 lg:p-10">
 
-        <h1 class="text-3xl font-extrabold text-indigo-700 mb-2">🍽️ 智能菜单规划</h1>
+        <h1 class="text-3xl font-extrabold text-indigo-700 mb-2">🤝 公共共享菜单规划</h1>
         
-        <!-- 本地模式提示横幅 -->
-        <div class="p-3 mb-4 rounded-lg text-sm font-medium bg-yellow-100 text-yellow-700">
-            ⚠️ 当前使用**本地存储模式**，数据仅保存在本设备浏览器中。
+        <!-- 模式状态横幅 -->
+        <div id="status-banner" class="p-3 mb-4 rounded-lg text-sm font-medium bg-blue-100 text-blue-700">
+            🎉 当前使用**云端共享模式**，您和您的丈夫可以实时同步菜单数据！
         </div>
 
         <p class="text-sm text-gray-500 mb-6 border-b pb-4">
             数据存储状态: 
-            <span id="user-id-display" class="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">本地存储 (Local Storage)</span>
+            <span id="user-id-display" class="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">正在连接云端...</span>
         </p>
 
-        <div id="main-content" class="space-y-10">
+        <!-- 加载状态指示器 -->
+        <div id="loading-spinner" class="text-center py-10">
+            <div class="animate-spin inline-block w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full"></div>
+            <p class="mt-2 text-indigo-600">正在进行匿名认证并连接数据库...</p>
+        </div>
+
+        <div id="main-content" class="space-y-10 hidden">
             
             <!-- 1. 菜单添加区 -->
             <section class="border border-indigo-200 rounded-xl p-4 bg-indigo-50">
@@ -91,52 +95,35 @@
 
     </div>
 
-    <script>
-        // =================================================================
-        // 本地存储操作 (Local Storage Operations)
-        // =================================================================
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, addDoc, onSnapshot, collection, deleteDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const LOCAL_STORAGE_KEY = 'menuPlannerLocalData';
+        // =================================================================
+        // 全局变量定义与配置 (Global Variables & Config)
+        // =================================================================
+        // 外部环境通常没有这些变量，我们提供默认值让它能运行在任何地方
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'shared-menu-app';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const SHARED_COLLECTION_NAME = 'shared_menu_items'; // 所有人共享的集合名称
+
+        // LLM API 配置 (保持不变，以备环境支持)
+        const API_KEY = ""; 
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
+        const hasLLMKey = typeof API_KEY !== 'undefined' && API_KEY !== "";
+        
+        let db;
+        let auth;
+        let userId = null; // 用户ID用于认证，但数据存储在公共路径
+        let isAppReady = false;
         window.menuItems = []; 
         window.currentFilter = 'All'; 
 
-        /**
-         * 从 localStorage 加载数据
-         * @returns {Array<Object>}
-         */
-        function loadLocalData() {
-            try {
-                const data = localStorage.getItem(LOCAL_STORAGE_KEY);
-                return data ? JSON.parse(data) : [];
-            } catch (e) {
-                console.error("加载本地数据失败:", e);
-                return [];
-            }
-        }
-        
-        /**
-         * 保存数据到 localStorage 并更新 UI
-         * @param {Array<Object>} data - 要保存的数据
-         */
-        function saveLocalDataAndRefresh(data) {
-            try {
-                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-                window.menuItems = data;
-                renderMenuItems(data, window.currentFilter);
-                renderCategoryFilters(data);
-            } catch (e) {
-                console.error("保存本地数据失败:", e);
-                displayMessage('save-message', '本地存储空间已满或发生错误！', 'error');
-            }
-        }
-        
         // =================================================================
         // 实用函数 (Utility Functions)
         // =================================================================
-
-        /**
-         * 显示错误或状态消息
-         */
         function displayMessage(elementId, message, type = 'info') {
             const el = document.getElementById(elementId);
             if (!el) return;
@@ -159,41 +146,129 @@
         }
 
         // =================================================================
-        // 数据操作 (Data Operations)
+        // Firebase 初始化与公共认证 (Firebase Init & Public Auth)
         // =================================================================
 
         /**
-         * 保存新菜肴到本地存储
+         * 获取公共菜单集合的引用路径
+         * @returns {string} 公共集合路径
          */
-        window.saveDish = function() {
+        function getCollectionPath() {
+            // 使用公共路径: /artifacts/{appId}/public/data/{your_collection_name}
+            return `artifacts/${appId}/public/data/${SHARED_COLLECTION_NAME}`;
+        }
+
+        /**
+         * 初始化 Firebase 应用并处理用户认证。
+         */
+        async function initializeFirebase() {
+            try {
+                // 确保 Firebase 配置存在
+                if (!firebaseConfig || !firebaseConfig.projectId) {
+                     // 外部环境如果缺乏配置，则直接提示错误并停止
+                     document.getElementById('loading-spinner').innerHTML = `<p class="text-red-600 font-bold">错误：此版本需要云端配置。请在 Canvas 环境中运行，或联系管理员。</p>`;
+                     return;
+                }
+
+                setLogLevel('debug'); 
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                window.db = db; 
+
+                // 2. 身份验证：使用匿名登录，保证所有用户都能读写公共数据
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        // 用户已认证（无论是否匿名）
+                        userId = user.uid;
+                        document.getElementById('user-id-display').textContent = '云端连接成功 (ID: ' + userId.substring(0, 8) + '...)';
+                        isAppReady = true;
+
+                        // 3. 认证完成后，开始监听数据
+                        document.getElementById('loading-spinner').classList.add('hidden');
+                        document.getElementById('main-content').classList.remove('hidden');
+                        listenForMenuItems();
+                    } else if (!isAppReady) {
+                        // 首次加载且没有用户，尝试匿名登录
+                        try {
+                            await signInAnonymously(auth);
+                        } catch (error) {
+                            console.error("Firebase 匿名登录失败:", error);
+                            document.getElementById('loading-spinner').innerHTML = `<p class="text-red-600">认证失败，无法连接数据库。</p>`;
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error("初始化 Firebase 失败:", error);
+                document.getElementById('loading-spinner').innerHTML = `<p class="text-red-600">应用加载失败：${error.message}</p>`;
+            }
+        }
+        
+        window.addEventListener('load', initializeFirebase);
+
+        // =================================================================
+        // Firestore 数据操作 (Firestore Data Operations)
+        // =================================================================
+
+        /**
+         * 监听菜单项的实时变化
+         */
+        function listenForMenuItems() {
+            if (!isAppReady || !db) return;
+
+            const menuColRef = collection(db, getCollectionPath());
+            
+            // 使用 onSnapshot 实时监听数据变化
+            onSnapshot(menuColRef, (snapshot) => {
+                const fetchedItems = [];
+                snapshot.forEach(doc => {
+                    // 解构数据，并添加 Firestore document ID
+                    fetchedItems.push({ id: doc.id, ...doc.data() });
+                });
+                
+                window.menuItems = fetchedItems;
+                renderMenuItems(window.menuItems, window.currentFilter);
+                renderCategoryFilters(window.menuItems);
+            }, (error) => {
+                console.error("监听菜单数据失败:", error);
+                // 如果监听失败，可能是权限问题或网络问题，但应用不会卡死
+                displayMessage('save-message', '实时连接失败，请刷新重试。', 'error');
+            });
+        }
+
+        /**
+         * 保存新菜肴到 Firestore
+         */
+        window.saveDish = async function() {
+            if (!isAppReady || !db) {
+                displayMessage('save-message', '应用未准备就绪，请稍候。', 'error');
+                return;
+            }
+
             const nameInput = document.getElementById('dish-name');
             const categoryInput = document.getElementById('dish-category');
             const name = nameInput.value.trim();
-            // 统一转换为小写，便于筛选和匹配
-            let category = categoryInput.value.trim().toLowerCase() || '其他'; 
+            let category = categoryInput.value.trim().toLowerCase() || '其他';
 
             if (!name) {
                 displayMessage('save-message', '菜名不能为空！', 'error');
                 return;
             }
-            
+
             const newDish = {
-                // 使用时间戳作为唯一ID
-                id: Date.now().toString(), 
                 name: name,
-                category: category,
-                createdAt: new Date().toISOString()
+                category: category, 
+                createdAt: new Date().toISOString(),
+                addedBy: userId // 记录是哪个用户添加的（可选）
             };
 
             try {
-                const currentData = loadLocalData();
-                currentData.push(newDish);
-                saveLocalDataAndRefresh(currentData);
-
-                displayMessage('save-message', `${name} 保存成功！`, 'success');
+                const menuColRef = collection(db, getCollectionPath());
+                await addDoc(menuColRef, newDish);
+                displayMessage('save-message', `${name} 保存成功并已共享！`, 'success');
                 nameInput.value = '';
                 categoryInput.value = '';
-
             } catch (error) {
                 console.error("保存菜肴失败:", error);
                 displayMessage('save-message', `保存失败: ${error.message}`, 'error');
@@ -201,20 +276,21 @@
         }
         
         /**
-         * 从本地存储中删除菜单项
-         * @param {string} dishId - 要删除的唯一ID
+         * 从 Firestore 中删除菜单项
          */
-        window.deleteDish = function(dishId, dishName) {
-            // 使用标准的 JavaScript 确认框，在 Safari 上可以正常工作
-            if (!window.confirm(`确定要删除菜单项 "${dishName}" 吗？`)) return;
+        window.deleteDish = async function(dishId, dishName) {
+            if (!isAppReady || !db) return;
+
+            // 使用自定义模态框替代 alert/confirm
+            if (!confirm(`确定要删除菜单项 "${dishName}" 吗？该操作将从共享列表中移除。`)) return;
 
             try {
-                const currentData = loadLocalData();
-                const updatedData = currentData.filter(item => item.id !== dishId);
-                saveLocalDataAndRefresh(updatedData);
+                const docRef = doc(db, getCollectionPath(), dishId);
+                await deleteDoc(docRef);
+                displayMessage('save-message', `${dishName} 已从共享列表中删除。`, 'success');
             } catch (error) {
                 console.error("删除菜单项失败:", error);
-                displayMessage('save-message', '删除失败，请检查浏览器设置。', 'error');
+                displayMessage('save-message', '删除失败，请检查网络或权限。', 'error');
             }
         }
         
@@ -223,7 +299,7 @@
         // =================================================================
         
         /**
-         * 根据当前筛选条件渲染菜单列表
+         * 渲染菜单列表
          */
         function renderMenuItems(items, filter) {
             const menuListEl = document.getElementById('menu-list');
@@ -245,13 +321,13 @@
             }
 
             filteredItems.forEach(item => {
+                const categoryDisplay = item.category.charAt(0).toUpperCase() + item.category.slice(1);
                 const div = document.createElement('div');
                 div.className = "flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200 transition duration-100 hover:shadow-sm";
-                // 使用 item.id 进行删除操作
                 div.innerHTML = `
                     <div class="flex-grow">
                         <span class="text-gray-900 font-medium">${item.name}</span>
-                        <span class="ml-3 inline-block text-xs font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">${item.category}</span>
+                        <span class="ml-3 inline-block text-xs font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">${categoryDisplay}</span>
                     </div>
                     <button onclick="deleteDish('${item.id}', '${item.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100 transition duration-150">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -270,7 +346,6 @@
             const container = document.getElementById('category-filter-container');
             container.innerHTML = '';
             
-            // 提取所有唯一分类，并首字母大写显示
             const categories = ['All', ...new Set(items.map(item => item.category))].map(c => c.charAt(0).toUpperCase() + c.slice(1));
             
             categories.forEach(category => {
@@ -296,23 +371,16 @@
         }
 
         // =================================================================
-        // 随机推荐逻辑 (Random Recommendation Logic)
+        // LLM/随机推荐逻辑 (LLM/Random Recommendation Logic - Fallback Mode)
         // =================================================================
         
         /**
-         * 本地模式下的简单关键词匹配
+         * 使用本地关键词匹配进行推荐 (LLM的简单替代)
          */
         function simpleLocalCategoryMatch(query, categories) {
             const lowerQuery = query.toLowerCase();
+            for (const category of categories) { if (lowerQuery.includes(category)) return category; }
             
-            // 1. 尝试直接匹配用户输入是否包含任何已有的分类名
-            for (const category of categories) {
-                if (lowerQuery.includes(category)) {
-                    return category;
-                }
-            }
-            
-            // 2. 简单的关键词映射（映射到常见的分类名）
             const keywordMap = {
                 '辣': '川菜', '清淡': '素食', '快': '快餐', '简单': '快餐',
                 '汤': '汤', '粥': '粥', '早': '早餐', '家常': '家常菜',
@@ -321,23 +389,20 @@
             
             for (const keyword in keywordMap) {
                 if (lowerQuery.includes(keyword)) {
-                    // 检查匹配到的分类是否存在于用户的分类列表中
                     const matchedCategory = keywordMap[keyword].toLowerCase();
-                    if (categories.includes(matchedCategory)) {
-                         return matchedCategory;
-                    }
+                    if (categories.includes(matchedCategory)) return matchedCategory;
                 }
             }
             
-            // 3. 默认返回一个随机分类
+            // 默认随机选择一个分类
             const randomIndex = Math.floor(Math.random() * categories.length);
-            return categories[randomIndex];
+            return categories[randomIndex] || '其他';
         }
 
         /**
          * 处理用户的随机点餐请求
          */
-        window.handleRecommendation = function() {
+        window.handleRecommendation = async function() {
             const queryInput = document.getElementById('recommendation-query');
             const resultEl = document.getElementById('recommendation-result');
             const recommendBtn = document.getElementById('recommend-button');
@@ -345,45 +410,46 @@
             const userQuery = queryInput.value.trim();
             const items = window.menuItems;
 
+            if (!isAppReady) {
+                 resultEl.innerHTML = '请等待应用连接到云端。';
+                 return;
+            }
             if (!userQuery) {
                 resultEl.innerHTML = '请输入你的要求，例如：我想吃点快速的晚餐。';
                 return;
             }
-            
             if (items.length === 0) {
                 resultEl.innerHTML = '请先添加菜单，我才能帮你推荐哦！';
                 return;
             }
 
-            // 提取当前所有的分类
             const allCategories = [...new Set(items.map(item => item.category))];
             
             recommendBtn.disabled = true;
             recommendBtn.textContent = '思考中... 请稍候...';
             resultEl.classList.remove('text-lg', 'font-medium');
+            resultEl.innerHTML = `<div class="animate-pulse text-sm text-green-600">正在从 ${allCategories.length} 个分类中挑选...</div>`;
             
-            // 1. 关键词匹配最佳分类
+            // 在此公共共享版本中，我们默认使用简单的本地匹配逻辑
             const matchedCategory = simpleLocalCategoryMatch(userQuery, allCategories);
             
-            // 2. 根据匹配结果进行本地随机选择
             let filteredDishes = items.filter(item => item.category === matchedCategory);
             
             let isRandomFallback = false;
             if (filteredDishes.length === 0) {
-                filteredDishes = items; // 备用：从所有菜中随机选一个
+                filteredDishes = items; 
                 isRandomFallback = true;
             }
             
             const randomIndex = Math.floor(Math.random() * filteredDishes.length);
             const recommendation = filteredDishes[randomIndex];
 
-            // 3. 构造最终的推荐消息
             const finalMessage = `
                 <p class="text-xl font-extrabold text-green-700 mb-2">${recommendation.name}！</p>
                 <p class="text-sm text-gray-600">
                     ${isRandomFallback
-                        ? `找不到匹配的 ${matchedCategory} 分类，为您从所有菜中随机推荐了：${recommendation.category}` 
-                        : `根据您的要求 (${matchedCategory}) 推荐，菜品分类是：${recommendation.category}`}
+                        ? `找不到匹配的分类，为您随机推荐了：${recommendation.category.charAt(0).toUpperCase() + recommendation.category.slice(1)}` 
+                        : `根据您的要求 (${matchedCategory.charAt(0).toUpperCase() + matchedCategory.slice(1)}) 推荐，菜品分类是：${recommendation.category.charAt(0).toUpperCase() + recommendation.category.slice(1)}`}
                 </p>
             `;
 
@@ -393,23 +459,6 @@
             recommendBtn.disabled = false;
             recommendBtn.textContent = '随机抽一个菜！🍽️';
         }
-        
-        // =================================================================
-        // 初始化 (Initialization)
-        // =================================================================
-
-        /**
-         * 在页面加载完成后启动应用
-         */
-        function initializeApp() {
-            // 加载本地数据并渲染UI
-            window.menuItems = loadLocalData(); 
-            renderMenuItems(window.menuItems, window.currentFilter);
-            renderCategoryFilters(window.menuItems);
-        }
-        
-        // 确保在页面内容加载完毕后启动
-        window.addEventListener('load', initializeApp);
 
     </script>
 
