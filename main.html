@@ -3,22 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>骏大厨菜单～ - 纯原生JS版</title>
+    <title>骏骏大厨菜单～ - 纯原生JS版</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     
     <!-- Custom Styles -->
     <style>
+        /* Macaron Color Palette:
+           Violet (#6D597A) - Primary Dark Accent
+           Pink (#F0B2B2) - Action Pink
+           Mint (#A8DADC) - Secondary Accent
+           Lavender (#D1C4E9) - Border/Subtle BG
+        */
+
         /* Custom Scrollbar for better aesthetics */
         .custom-scrollbar::-webkit-scrollbar {
             width: 6px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-            background-color: #D9C4A8; /* Warm beige */
+            background-color: #A8DADC; /* Soft Mint */
             border-radius: 3px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
-            background-color: #F0EAE4; /* Lighter beige */
+            background-color: #F7F4F9; /* Very Light Lavender */
         }
         body {
             font-family: 'Inter', sans-serif;
@@ -28,18 +35,18 @@
     </style>
 </head>
 
-<body class="bg-[#FAF6F2]">
+<body class="bg-[#FDFCFD]">
     <div id="app" class="min-h-screen p-4 sm:p-8 flex flex-col items-center">
         <!-- 核心应用容器将在JS中动态生成 -->
     </div>
 
     <script type="module">
         // =================================================================
-        // Firebase Imports and Config (使用 ES Modules，更稳定可靠)
+        // Firebase Imports and Config
         // =================================================================
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, doc, addDoc, deleteDoc, updateDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, doc, addDoc, deleteDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // 核心 Firebase 配置 (使用您提供的配置)
         const CUSTOM_FIREBASE_CONFIG = {
@@ -51,12 +58,13 @@
             appId: "1:107344539892:web:92fa634f2a2bd0710e2ea1"
         };
 
+        const APP_NAME = "骏骏大厨菜单～";
         const appId = CUSTOM_FIREBASE_CONFIG.projectId || 'shared-menu-app';
         const SHARED_COLLECTION_NAME = 'shared_menu_items';
         const getCollectionPath = () => `public/${appId}/${SHARED_COLLECTION_NAME}`;
 
-        // 初始化 Firebase
-        setLogLevel('error'); // 减少控制台噪音
+        // 初始化 Firebase (设置日志级别为 Debug，以便查看连接详情)
+        setLogLevel('debug'); 
         const app = initializeApp(CUSTOM_FIREBASE_CONFIG);
         const db = getFirestore(app);
         const auth = getAuth(app);
@@ -68,7 +76,8 @@
         let menuItems = [];
         let currentView = 'recommend'; // recommend, manage, add
         let saveMessage = { text: '', type: 'info' };
-        let isFirebaseReady = false;
+        let isLoading = true;
+        let connectionError = null;
 
         // =================================================================
         // 辅助函数
@@ -98,11 +107,9 @@
                 ListChecks: '<path d="M13 19h6"/><path d="M13 15h6"/><path d="M13 11h6"/><path d="M3 12l5-5 5 5"/><path d="M3 16h6"/>',
                 PlusCircle: '<circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="M8 12h8"/>',
                 Trash2: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
-                Edit: '<path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
-                Check: '<path d="M20 6 9 17l-5-5"/>',
-                X: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
                 DishIcon: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M9 13.5v.5c0 4.3 3 7.6 6.8 8.1l.2.1h.5a8.496 8.496 0 0 0 3.7-2.9L22 17"/><path d="M15 13.5v.5c0 4.3-3 7.6-6.8 8.1l-.2.1h-.5c-3 0-5.6-1.5-7.3-4.1l-1.3-2"/><path d="M3 3h20"/>'
             };
+            const path = icons[name] || '';
             return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${className}">${path}</svg>`;
         };
 
@@ -111,19 +118,16 @@
         // 视图渲染函数
         // =================================================================
 
-        /**
-         * 渲染 "添加菜品" 视图
-         */
         const renderAddView = () => {
             return `
-                <div class="space-y-8 p-6 bg-white rounded-2xl shadow-xl border border-[#D9C4A8]">
-                    <h2 class="text-2xl font-bold text-[#8B4513] border-b pb-3">${renderIcon('PlusCircle', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 录入新菜谱</h2>
+                <div class="space-y-8 p-6 bg-white rounded-2xl shadow-xl border border-[#D1C4E9]">
+                    <h2 class="text-2xl font-bold text-[#6D597A] border-b pb-3">${renderIcon('PlusCircle', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 录入新菜谱</h2>
                     <p class="text-gray-600">将您的新菜品加入共享菜单库，方便日后点餐和管理。</p>
 
                     <div class="space-y-5">
-                        <input id="dishNameInput" type="text" placeholder="菜名 (例: 红烧肉)" class="w-full p-4 border border-[#B33939]/30 rounded-xl focus:ring-[#B33939] focus:border-[#B33939] transition duration-200 text-base shadow-sm" />
-                        <input id="dishCategoryInput" type="text" placeholder="分类 (例: 沪菜, 荤菜, 节日)" class="w-full p-4 border border-[#B33939]/30 rounded-xl focus:ring-[#B33939] focus:border-[#B33939] transition duration-200 text-base shadow-sm" />
-                        <button id="saveDishButton" class="w-full text-white font-extrabold tracking-wider py-4 rounded-xl shadow-lg transition duration-200 transform hover:scale-[1.01] bg-[#B33939] hover:bg-[#992D2D] active:bg-[#6F1A07] flex items-center justify-center">
+                        <input id="dishNameInput" type="text" placeholder="菜名 (例: 红烧肉)" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm" />
+                        <input id="dishCategoryInput" type="text" placeholder="分类 (例: 沪菜, 荤菜, 节日)" class="w-full p-4 border border-[#F0B2B2] rounded-xl focus:ring-[#F0B2B2] focus:border-[#F0B2B2] transition duration-200 text-base shadow-sm" />
+                        <button id="saveDishButton" class="w-full text-white font-extrabold tracking-wider py-4 rounded-xl shadow-lg transition duration-200 transform hover:scale-[1.01] bg-[#F0B2B2] hover:bg-[#E79696] active:bg-[#D98282] flex items-center justify-center">
                             ${renderIcon('PlusCircle', 'w-5 h-5 mr-2')}
                             保存新菜品
                         </button>
@@ -132,13 +136,7 @@
             `;
         };
 
-        /**
-         * 渲染 "管理菜单" 视图
-         */
         const renderManageView = () => {
-            const categories = ['All', ...[...new Set(menuItems.map(item => item.category))].map(c => c.charAt(0).toUpperCase() + c.slice(1))];
-            
-            // 默认不过滤
             const filteredItems = menuItems; 
 
             const menuListHTML = filteredItems.length === 0 
@@ -146,17 +144,16 @@
                 : filteredItems.map(item => {
                     const categoryDisplay = item.category.charAt(0).toUpperCase() + item.category.slice(1);
                     return `
-                        <div class="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-lg transition duration-150 hover:shadow-xl hover:bg-[#FFFDFB]">
+                        <div class="flex justify-between items-center bg-white p-4 rounded-xl border border-[#D1C4E9] shadow-lg transition duration-150 hover:shadow-xl hover:bg-[#FDFCFD]">
                             <div class="flex-grow flex items-center justify-start min-w-0 space-x-3">
-                                ${renderIcon('DishIcon', 'w-6 h-6 text-[#B33939] flex-shrink-0')}
+                                ${renderIcon('DishIcon', 'w-6 h-6 text-[#F0B2B2] flex-shrink-0')}
                                 <div class="min-w-0">
                                     <span class="text-gray-900 font-bold text-lg truncate block">${item.name}</span>
-                                    <span class="mt-1 flex-shrink-0 inline-block text-xs font-medium bg-[#8B4513]/10 text-[#8B4513] px-3 py-0.5 rounded-full shadow-inner">${categoryDisplay}</span>
+                                    <span class="mt-1 flex-shrink-0 inline-block text-xs font-medium bg-[#6D597A]/10 text-[#6D597A] px-3 py-0.5 rounded-full shadow-inner">${categoryDisplay}</span>
                                 </div>
                             </div>
                             
                             <div class="flex space-x-2 ml-4 flex-shrink-0">
-                                <!-- 仅添加删除功能，简化编辑逻辑 -->
                                 <button data-id="${item.id}" data-name="${item.name}" class="delete-dish-btn text-red-500 hover:text-red-700 p-2 rounded-full hover:bg-red-100 transition duration-150 shadow-sm" title="删除菜肴">
                                     ${renderIcon('Trash2')}
                                 </button>
@@ -165,10 +162,9 @@
                     `;
                 }).join('');
 
-            // 注意：为了简化 Vanilla JS 代码，我移除了复杂的分类过滤功能和编辑功能，只保留了最核心的展示和删除。
             return `
-                <div class="space-y-6 p-6 bg-white rounded-2xl shadow-xl border border-[#D9C4A8]">
-                    <h2 class="text-2xl font-bold text-[#8B4513]">${renderIcon('ListChecks', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 菜单库总览 (共 ${menuItems.length} 项)</h2>
+                <div class="space-y-6 p-6 bg-white rounded-2xl shadow-xl border border-[#D1C4E9]">
+                    <h2 class="text-2xl font-bold text-[#6D597A]">${renderIcon('ListChecks', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 菜单库总览 (共 ${menuItems.length} 项)</h2>
 
                     <div class="space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
                         ${menuListHTML}
@@ -177,26 +173,23 @@
             `;
         };
         
-        /**
-         * 渲染 "随机推荐" 视图
-         */
         const renderRecommendView = () => {
-            const recommendationHTML = `<p class="text-lg text-[#8B4513] font-medium">请点击按钮开始点餐！</p>`;
+            const recommendationHTML = `<p class="text-lg text-[#6D597A] font-medium">请点击按钮开始点餐！</p>`;
 
             return `
-                <div class="space-y-8 p-6 bg-white rounded-2xl shadow-xl border border-[#D9C4A8]">
-                    <h2 class="text-2xl font-bold text-[#8B4513] border-b pb-3">${renderIcon('Home', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 智能点餐机</h2>
+                <div class="space-y-8 p-6 bg-white rounded-2xl shadow-xl border border-[#D1C4E9]">
+                    <h2 class="text-2xl font-bold text-[#6D597A] border-b pb-3">${renderIcon('Home', 'w-6 h-6 inline mr-2 transform -translate-y-0.5')} 智能点餐机</h2>
                     <p class="text-gray-600">系统将在共享菜单中随机为您挑选今日菜品。</p>
 
                     <div class="space-y-5">
-                        <input id="recommendQuery" type="text" placeholder="随便来个家常菜 (目前仅支持随机抽选)" class="w-full p-4 border border-[#8B4513]/30 rounded-xl focus:ring-[#8B4513] focus:border-[#8B4513] transition duration-200 text-base shadow-sm" />
-                        <button id="recommendButton" class="w-full text-white font-extrabold tracking-wider py-4 rounded-xl shadow-lg transition duration-200 transform hover:scale-[1.01] bg-[#8B4513] hover:bg-[#6F3624] active:bg-[#4A2C2A] flex items-center justify-center">
+                        <input id="recommendQuery" type="text" placeholder="随便来个家常菜 (目前仅支持随机抽选)" class="w-full p-4 border border-[#A8DADC] rounded-xl focus:ring-[#A8DADC] focus:border-[#A8DADC] transition duration-200 text-base shadow-sm" />
+                        <button id="recommendButton" class="w-full text-white font-extrabold tracking-wider py-4 rounded-xl shadow-lg transition duration-200 transform hover:scale-[1.01] bg-[#A8DADC] hover:bg-[#87C7C7] active:bg-[#6CA2A2] flex items-center justify-center">
                             ${renderIcon('Home', 'w-5 h-5 mr-2')}
                             随机抽一个菜！
                         </button>
                     </div>
 
-                    <div id="recommendationResult" class="min-h-[8rem] flex flex-col justify-center items-center text-center p-6 bg-[#FAF6F2] border border-[#D9C4A8] rounded-2xl shadow-inner">
+                    <div id="recommendationResult" class="min-h-[8rem] flex flex-col justify-center items-center text-center p-6 bg-[#F7F4F9] border border-[#D1C4E9] rounded-2xl shadow-inner">
                         ${recommendationHTML}
                     </div>
                 </div>
@@ -212,14 +205,35 @@
 
             let mainContentHTML = '';
 
-            if (!isFirebaseReady) {
+            if (isLoading) {
+                // 加载中视图
                 mainContentHTML = `
-                    <div class="text-center py-20 bg-white rounded-2xl shadow-xl border border-[#D9C4A8] w-full max-w-2xl">
-                        <div class="animate-spin inline-block w-10 h-10 border-4 border-[#B33939] border-t-transparent rounded-full"></div>
-                        <p class="mt-4 text-[#B33939] font-semibold">正在连接您的私人菜单云端...</p>
+                    <div class="text-center py-20 bg-white rounded-2xl shadow-xl border border-[#D1C4E9] w-full max-w-2xl">
+                        <div class="animate-spin inline-block w-10 h-10 border-4 border-[#F0B2B2] border-t-transparent rounded-full"></div>
+                        <p class="mt-4 text-[#6D597A] font-semibold">正在连接您的私人菜单云端...</p>
+                        ${connectionError ? 
+                            `<div class="mt-6 text-red-600 bg-red-50 p-3 rounded border border-red-300 mx-10 text-sm">
+                                <p class="font-bold">连接遇到问题，正在重试...</p>
+                                <p class="text-xs mt-1">请查看控制台获取详细信息。</p>
+                            </div>` : ''
+                        }
                     </div>
                 `;
-            } else {
+            } else if (connectionError) {
+                 // 错误视图
+                mainContentHTML = `
+                    <div class="text-center py-20 bg-white rounded-2xl shadow-xl border border-[#D1C4E9] w-full max-w-2xl">
+                        <h2 class="text-2xl font-bold text-red-700 mb-4">连接失败</h2>
+                        <p class="text-gray-600">无法连接到 Firebase 后端。</p>
+                        <p class="text-sm text-red-500 mt-2">${connectionError}</p>
+                        <button onclick="window.location.reload()" class="mt-6 bg-[#F0B2B2] text-white py-2 px-4 rounded-xl shadow-md hover:bg-[#E79696] transition duration-200">
+                            重新加载应用
+                        </button>
+                    </div>
+                `;
+            } 
+            else {
+                // 主应用视图
                 let viewHTML = '';
                 if (currentView === 'add') viewHTML = renderAddView();
                 else if (currentView === 'manage') viewHTML = renderManageView();
@@ -233,14 +247,14 @@
                 const messageClass = saveMessage.text ? messageStyle[saveMessage.type] : 'hidden';
 
                 mainContentHTML = `
-                    <div class="w-full max-w-2xl bg-[#FFFDFB] shadow-2xl rounded-3xl p-6 sm:p-8 lg:p-10 mb-6 border border-[#EBE3D7]">
-                        <h1 class="text-4xl font-extrabold text-[#B33939] mb-1 tracking-wide">
-                            骏大厨菜单～
+                    <div class="w-full max-w-2xl bg-white shadow-2xl rounded-3xl p-6 sm:p-8 lg:p-10 mb-6 border border-[#E3DFFD]">
+                        <h1 class="text-4xl font-extrabold text-[#F0B2B2] mb-1 tracking-wide">
+                            ${APP_NAME}
                             ${renderIcon('DishIcon', 'w-8 h-8 inline-block ml-3 transform translate-y-[-2px]')}
                         </h1>
                         <p class="text-sm text-gray-500 mb-4 border-b pb-4">
                             共享ID: 
-                            <span class="font-mono text-xs bg-[#FAF6F2] px-2 py-0.5 rounded ml-2 text-gray-600">
+                            <span class="font-mono text-xs bg-[#F7F4F9] px-2 py-0.5 rounded ml-2 text-gray-600">
                                 ${userId ? `ID: ${userId.substring(0, 8)}... | 菜品总数: ${menuItems.length}` : '认证失败'}
                             </span>
                         </p>
@@ -251,7 +265,7 @@
                         </div>
                         
                         <!-- 导航栏 -->
-                        <div class="flex justify-between p-1 bg-[#F0EAE4] rounded-xl shadow-inner mb-8">
+                        <div class="flex justify-between p-1 bg-[#D1C4E9] rounded-xl shadow-inner mb-8">
                             ${[
                                 { key: 'recommend', label: '今天吃啥', icon: 'Home' },
                                 { key: 'manage', label: '管理菜单', icon: 'ListChecks' },
@@ -259,8 +273,8 @@
                             ].map(({ key, label, icon }) => `
                                 <button data-view="${key}" class="nav-button flex-1 flex items-center justify-center py-2 sm:py-3 rounded-xl text-sm font-bold tracking-wider transition duration-300 ${
                                     currentView === key 
-                                        ? 'bg-[#8B4513] text-white shadow-lg shadow-[#8B4513]/30' 
-                                        : 'text-gray-700 hover:bg-[#D9C4A8] hover:text-white'
+                                        ? 'bg-[#6D597A] text-white shadow-lg shadow-[#6D597A]/30' 
+                                        : 'text-[#6D597A] hover:bg-[#A8DADC] hover:text-white'
                                 }">
                                     ${renderIcon(icon, 'w-5 h-5 mr-1.5')}
                                     <span class="hidden sm:inline">${label}</span>
@@ -282,9 +296,6 @@
         // 事件监听与业务逻辑
         // =================================================================
 
-        /**
-         * 添加所有事件监听器
-         */
         const attachEventListeners = () => {
             // 导航按钮
             document.querySelectorAll('.nav-button').forEach(button => {
@@ -370,9 +381,9 @@
                     const resultEl = document.getElementById('recommendationResult');
                     if (resultEl) {
                          resultEl.innerHTML = `
-                            <p class="text-4xl font-extrabold text-[#B33939] mb-2 animate-bounce">${dish.name}！</p>
+                            <p class="text-4xl font-extrabold text-[#F0B2B2] mb-2 animate-bounce">${dish.name}！</p>
                             <p class="text-base text-gray-700">
-                                所属分类：<span class="font-semibold text-[#8B4513]">${categoryDisplay}</span>
+                                所属分类：<span class="font-semibold text-[#6D597A]">${categoryDisplay}</span>
                             </p>
                             <p class="text-xs text-gray-500 mt-1">(从所有菜品中随机挑选)</p>
                          `;
@@ -389,15 +400,45 @@
         // =================================================================
 
         /**
+         * 尝试匿名登录，最多重试 5 次
+         */
+        const trySignIn = async (attempt = 1) => {
+            if (attempt > 5) {
+                isLoading = false;
+                connectionError = "匿名登录失败，已达到最大重试次数。请检查您的 Firebase 配置和网络连接。";
+                console.error(connectionError);
+                renderApp();
+                return;
+            }
+
+            try {
+                // 确保持久性设置为本地，以提高重连稳定性
+                await setPersistence(auth, browserLocalPersistence);
+                await signInAnonymously(auth);
+                // 成功后 onAuthStateChanged 监听器会接管
+            } catch (error) {
+                console.warn(`第 ${attempt} 次匿名登录尝试失败，将在 ${1000 * attempt}ms 后重试...`, error.message);
+                connectionError = `认证失败 (错误代码: ${error.code})，正在重试...`;
+                renderApp();
+                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                await trySignIn(attempt + 1);
+            }
+        };
+
+
+        /**
          * 启动 Firebase 认证和数据监听
          */
         window.onload = () => {
-            // 1. 认证监听
-            onAuthStateChanged(auth, async (user) => {
+            // 首次渲染加载界面
+            renderApp();
+
+            // 1. 认证监听 (只执行一次订阅)
+            const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
                 if (user) {
                     userId = user.uid;
-                    isFirebaseReady = true;
-                    renderApp();
+                    isLoading = false;
+                    connectionError = null; // 清除任何连接错误
 
                     // 2. 数据监听 (仅在认证成功后启动)
                     const menuColRef = collection(db, getCollectionPath());
@@ -406,27 +447,24 @@
                         snapshot.forEach(doc => {
                             menuItems.push({ id: doc.id, ...doc.data() });
                         });
+                        // 每次数据更新都重新渲染
                         renderApp();
                     }, (error) => {
                         console.error("监听菜单数据失败:", error);
-                        handleSaveMessage('实时连接失败，请刷新重试。', 'error');
+                        // 如果数据监听失败，不应卡住，但要报错
+                        handleSaveMessage('实时菜单数据加载失败，请刷新重试。', 'error');
                     });
                     
+                    // 认证成功后停止监听，避免重复触发
+                    unsubscribeAuth();
+                    
                 } else {
-                    try {
-                        // 匿名登录
-                        await signInAnonymously(auth);
-                    } catch (error) {
-                        console.error("Firebase 匿名登录失败:", error);
-                        handleSaveMessage("认证失败，请检查 Firebase 匿名登录是否已启用。", 'error');
-                        isFirebaseReady = true; // 即使失败也标记为就绪，显示错误信息
-                        renderApp();
+                    // 如果没有用户（首次加载或会话过期），尝试登录
+                    if(isLoading) { // 确保只在加载状态下触发登录尝试
+                        trySignIn();
                     }
                 }
             });
-
-            // 首次渲染加载界面
-            renderApp();
         };
 
     </script>
