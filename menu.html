@@ -1,600 +1,582 @@
-<!DOCTYPE html>
-<html lang="zh">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>公共共享菜单规划与点餐</title>
-    <!-- 引入 Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        /* 字体和基本样式 */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f7f9fb;
-        }
-        #app-container {
-            min-height: 100vh;
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background-color: #a5b4fc;
-            border-radius: 2px;
-        }
-        /* 隐藏删除时的确认框 */
-        .custom-confirm-modal {
-            /* ... 替换 window.confirm 的样式，这里仅为示意 */
-        }
-    </style>
-</head>
-<body class="p-4 sm:p-8">
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
-    <div id="app-container" class="w-full max-w-2xl mx-auto bg-white shadow-2xl rounded-2xl p-6 sm:p-8 lg:p-10">
+// Firebase imports
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, addDoc, onSnapshot, collection, deleteDoc, updateDoc, setLogLevel } from 'firebase/firestore';
 
-        <h1 class="text-3xl font-extrabold text-indigo-700 mb-2">🤝 公共共享菜单规划</h1>
+// =================================================================
+// 核心 Firebase 配置 (Core Firebase Configuration)
+// =================================================================
+const CUSTOM_FIREBASE_CONFIG = {
+    apiKey: "AIzaSyB3o6MKpxCz1HvgR2k8wpDF9GDtMtZD3dc",
+    authDomain: "junjunmenu.firebaseapp.com",
+    projectId: "junjunmenu",
+    storageBucket: "junjunmenu.firebasestorage.app",
+    messagingSenderId: "107344539892",
+    appId: "1:107344539892:web:92fa634f2a2bd0710e2ea1"
+};
+
+const appId = CUSTOM_FIREBASE_CONFIG.projectId || 'shared-menu-app';
+const SHARED_COLLECTION_NAME = 'shared_menu_items';
+
+let dbInstance = null;
+let authInstance = null;
+
+/**
+ * 获取公共菜单集合的引用路径
+ */
+const getCollectionPath = () => `public/${appId}/${SHARED_COLLECTION_NAME}`;
+
+
+// =================================================================
+// 辅助图标组件 (Icons)
+// 使用 SVG 定义以确保风格一致性
+// =================================================================
+const Home = ({ className = 'w-5 h-5' }) => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>);
+const ListChecks = ({ className = 'w-5 h-5' }) => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M13 19h6"/><path d="M13 15h6"/><path d="M13 11h6"/><path d="M3 12l5-5 5 5"/><path d="M3 16h6"/></svg>);
+const PlusCircle = ({ className = 'w-5 h-5' }) => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>);
+const Trash2 = ({ className = 'w-5 h-5' }) => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>);
+const Edit = ({ className = 'w-5 h-5' }) => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>);
+const Check = ({ className = 'w-5 h-5' }) => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M20 6 9 17l-5-5"/></svg>);
+const X = ({ className = 'w-5 h-5' }) => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>);
+const DishIcon = ({ className = 'w-6 h-6' }) => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M9 13.5v.5c0 4.3 3 7.6 6.8 8.1l.2.1h.5a8.496 8.496 0 0 0 3.7-2.9L22 17"/><path d="M15 13.5v.5c0 4.3-3 7.6-6.8 8.1l-.2.1h-.5c-3 0-5.6-1.5-7.3-4.1l-1.3-2"/><path d="M3 3h20"/></svg>);
+
+
+// =================================================================
+// 视图组件 (View Components)
+// =================================================================
+
+/**
+ * 菜单添加页面 (Add View)
+ */
+const AddView = ({ db, userId, onSaveMessage }) => {
+    const [dishName, setDishName] = useState('');
+    const [dishCategory, setDishCategory] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+
+    const saveDish = async () => {
+        if (!dishName.trim()) {
+            onSaveMessage('菜名不能为空！', 'error');
+            return;
+        }
+
+        setIsLoading(true);
+        const category = dishCategory.trim().toLowerCase() || '其他';
         
-        <!-- 模式状态横幅 -->
-        <div id="status-banner" class="p-3 mb-4 rounded-lg text-sm font-medium bg-blue-100 text-blue-700">
-            🎉 当前使用**云端共享模式**，您和您的丈夫可以实时同步菜单数据！
-        </div>
-
-        <p class="text-sm text-gray-500 mb-6 border-b pb-4">
-            数据存储状态: 
-            <span id="user-id-display" class="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">正在连接云端...</span>
-        </p>
-
-        <!-- 加载状态指示器 -->
-        <div id="loading-spinner" class="text-center py-10">
-            <div class="animate-spin inline-block w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full"></div>
-            <p class="mt-2 text-indigo-600">正在进行匿名认证并连接数据库...</p>
-        </div>
-
-        <div id="main-content" class="space-y-10 hidden">
-            
-            <!-- 1. 菜单添加区 -->
-            <section class="border border-indigo-200 rounded-xl p-4 bg-indigo-50">
-                <h2 class="text-xl font-bold text-indigo-700 mb-4">✨ 添加新菜单</h2>
-                <div class="space-y-3">
-                    <input type="text" id="dish-name" placeholder="输入菜名 (例如: 宫保鸡丁)" class="w-full p-3 border border-indigo-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                    <input type="text" id="dish-category" placeholder="输入分类 (例如: 川菜, 素食, 早餐)" class="w-full p-3 border border-indigo-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                    <button onclick="saveDish()" class="w-full bg-indigo-600 text-white font-semibold py-3 rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 transform hover:scale-[1.01]">
-                        保存菜单 💾
-                    </button>
-                    <p id="save-message" class="text-sm text-center pt-1"></p>
-                </div>
-            </section>
-
-            <!-- 2. 菜单推荐/随机点餐区 -->
-            <section class="border border-green-200 rounded-xl p-4 bg-green-50">
-                <h2 class="text-xl font-bold text-green-700 mb-4">❓ 今天吃什么？</h2>
-                <div class="space-y-3">
-                    <input type="text" id="recommendation-query" placeholder="我想吃点清淡的... / 随便来个家常菜" class="w-full p-3 border border-green-300 rounded-lg focus:ring-green-500 focus:border-green-500 transition duration-150">
-                    <button id="recommend-button" onclick="handleRecommendation()" class="w-full bg-green-600 text-white font-semibold py-3 rounded-lg shadow-md hover:bg-green-700 transition duration-150 transform hover:scale-[1.01]">
-                        随机抽一个菜！🍽️
-                    </button>
-                    <p id="recommendation-result" class="mt-4 p-3 bg-white border border-green-400 rounded-lg text-lg font-medium text-gray-700 min-h-[4rem] flex items-center justify-center text-center">
-                        告诉我你想吃什么吧！
-                    </p>
-                </div>
-            </section>
-            
-            <!-- 3. 已保存菜单概览 (查看、编辑和删除都在这里) -->
-            <section>
-                <h2 class="text-xl font-bold text-gray-700 mb-4">📖 已保存的菜单 (共 <span id="menu-count">0</span> 项 | 实时更新)</h2>
-                
-                <!-- 分类标签和过滤 -->
-                <div id="category-filter-container" class="flex flex-wrap gap-2 mb-4 custom-scrollbar overflow-x-auto pb-2">
-                    <!-- 标签由 JS 填充 -->
-                </div>
-
-                <div id="menu-list" class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar p-2 -m-2">
-                    <p id="empty-message" class="text-gray-400 text-center py-4">您还没有添加任何菜肴！</p>
-                    <!-- 菜单项由 JS 填充 -->
-                </div>
-            </section>
-
-        </div>
-
-    </div>
-
-    <!-- Firebase SDKs -->
-    <script type="module">
-        // 导入 Firebase 核心功能和 Firestore 数据操作
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, addDoc, onSnapshot, collection, deleteDoc, updateDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // =================================================================
-        // 全局变量定义与配置 (Global Variables & Config)
-        // =================================================================
-
-        // --------------------------------------------------------------------------------
-        // !!! IMPORTANT: 请在这里粘贴您从 Firebase 控制台获取的配置对象 !!!
-        // --------------------------------------------------------------------------------
-        const CUSTOM_FIREBASE_CONFIG = {
-            apiKey: "AIzaSyB3o6MKpxCz1HvgR2k8wpDF9GDtMtZD3dc",
-            authDomain: "junjunmenu.firebaseapp.com",
-            projectId: "junjunmenu",
-            storageBucket: "junjunmenu.firebasestorage.app",
-            messagingSenderId: "107344539892",
-            appId: "1:107344539892:web:92fa634f2a2bd0710e2ea1"
+        const newDish = {
+            name: dishName.trim(),
+            category: category, 
+            createdAt: new Date().toISOString(),
+            addedBy: userId 
         };
-        // --------------------------------------------------------------------------------
-        // --------------------------------------------------------------------------------
 
-        const appId = CUSTOM_FIREBASE_CONFIG.projectId || 'shared-menu-app';
-        const firebaseConfig = CUSTOM_FIREBASE_CONFIG;
-        // 使用一个公共的集合名称，确保所有人共享数据
-        const SHARED_COLLECTION_NAME = 'shared_menu_items'; 
-        
-        let db;
-        let auth;
-        let userId = null; 
-        let isAppReady = false;
-        window.menuItems = []; 
-        window.currentFilter = 'All'; 
-
-        // =================================================================
-        // 实用函数 (Utility Functions)
-        // =================================================================
-        function displayMessage(elementId, message, type = 'info') {
-            const el = document.getElementById(elementId);
-            if (!el) return;
-
-            el.textContent = message;
-            el.className = 'text-sm text-center pt-1';
-            
-            if (type === 'success') {
-                el.classList.add('text-green-600', 'font-semibold');
-            } else if (type === 'error') {
-                el.classList.add('text-red-600', 'font-semibold');
-            } else {
-                el.classList.add('text-gray-500');
-            }
-
-            setTimeout(() => {
-                el.textContent = '';
-                el.className = 'text-sm text-center pt-1';
-            }, 3000);
-        }
-        
-        // =================================================================
-        // Firebase 初始化与公共认证 (Firebase Init & Public Auth)
-        // =================================================================
-
-        /**
-         * 获取公共菜单集合的引用路径
-         */
-        function getCollectionPath() {
-            // 在您自己的 Firebase 中，我们使用这种简单且公开的路径来存储数据
-            return `public/${appId}/${SHARED_COLLECTION_NAME}`;
-        }
-
-        /**
-         * 初始化 Firebase 应用并处理用户认证。
-         */
-        async function initializeFirebase() {
-            try {
-                if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
-                     document.getElementById('loading-spinner').innerHTML = `
-                        <p class="text-red-600 font-bold">错误：配置缺失。</p>
-                        <p class="text-red-600">请按照指南，将您的 Firebase 配置密钥粘贴到代码中的 CUSTOM_FIREBASE_CONFIG 部分。</p>
-                     `;
-                     return;
-                }
-
-                setLogLevel('debug'); 
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                window.db = db; 
-
-                // 2. 身份验证：使用匿名登录
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        const userIdDisplay = document.getElementById('user-id-display');
-                        // 显示用户ID的前8位，用于标识
-                        userIdDisplay.textContent = '云端连接成功 (ID: ' + userId.substring(0, 8) + '... | 共享)'; 
-                        isAppReady = true;
-
-                        // 3. 认证完成后，开始监听数据
-                        document.getElementById('loading-spinner').classList.add('hidden');
-                        document.getElementById('main-content').classList.remove('hidden');
-                        listenForMenuItems();
-                    } else if (!isAppReady) {
-                        // 首次加载且没有用户，尝试匿名登录
-                        try {
-                            await signInAnonymously(auth);
-                        } catch (error) {
-                            console.error("Firebase 匿名登录失败:", error);
-                            document.getElementById('loading-spinner').innerHTML = `<p class="text-red-600">认证失败，请检查您的 Firebase 匿名登录是否已启用。</p>`;
-                        }
-                    }
-                });
-
-            } catch (error) {
-                console.error("初始化 Firebase 失败:", error);
-                document.getElementById('loading-spinner').innerHTML = `<p class="text-red-600">应用加载失败：${error.message}</p>`;
-            }
-        }
-        
-        window.addEventListener('load', initializeFirebase);
-
-        // =================================================================
-        // Firestore 数据操作 (Firestore Data Operations)
-        // =================================================================
-
-        /**
-         * 监听菜单项的实时变化
-         */
-        function listenForMenuItems() {
-            if (!isAppReady || !db) return;
-
+        try {
             const menuColRef = collection(db, getCollectionPath());
-            
-            onSnapshot(menuColRef, (snapshot) => {
-                const fetchedItems = [];
-                snapshot.forEach(doc => {
-                    // 解构数据，并添加 Firestore document ID
-                    fetchedItems.push({ id: doc.id, ...doc.data() });
-                });
-                
-                window.menuItems = fetchedItems;
-                renderMenuItems(window.menuItems, window.currentFilter);
-                renderCategoryFilters(window.menuItems);
-            }, (error) => {
-                console.error("监听菜单数据失败:", error);
-                displayMessage('save-message', '实时连接失败，请刷新重试。', 'error');
+            await addDoc(menuColRef, newDish);
+            onSaveMessage(`${dishName.trim()} 保存成功并已共享！`, 'success');
+            setDishName('');
+            setDishCategory('');
+        } catch (error) {
+            console.error("保存菜肴失败:", error);
+            onSaveMessage(`保存失败: ${error.message}`, 'error');
+        } finally {
+            setIsLoading(false);
+        }
+    }
+
+    return (
+        <div className="space-y-8 p-6 bg-white rounded-2xl shadow-xl border border-[#D9C4A8]">
+            <h2 className="text-2xl font-bold text-[#8B4513] border-b pb-3">✍️ 录入新菜谱</h2>
+            <p className="text-gray-600">将您的新菜品加入共享菜单库，方便日后点餐和管理。</p>
+
+            <div className="space-y-5">
+                <input
+                    type="text"
+                    value={dishName}
+                    onChange={(e) => setDishName(e.target.value)}
+                    placeholder="菜名 (例: 红烧肉)"
+                    className="w-full p-4 border border-[#B33939]/30 rounded-xl focus:ring-[#B33939] focus:border-[#B33939] transition duration-200 text-base shadow-sm"
+                />
+                <input
+                    type="text"
+                    value={dishCategory}
+                    onChange={(e) => setDishCategory(e.target.value)}
+                    placeholder="分类 (例: 沪菜, 荤菜, 节日)"
+                    className="w-full p-4 border border-[#B33939]/30 rounded-xl focus:ring-[#B33939] focus:border-[#B33939] transition duration-200 text-base shadow-sm"
+                />
+                <button
+                    onClick={saveDish}
+                    disabled={isLoading}
+                    className={`w-full text-white font-extrabold tracking-wider py-4 rounded-xl shadow-lg transition duration-200 transform hover:scale-[1.01] flex items-center justify-center ${
+                        isLoading ? 'bg-[#B33939]/70 cursor-not-allowed' : 'bg-[#B33939] hover:bg-[#992D2D] active:bg-[#6F1A07]'
+                    }`}
+                >
+                    {isLoading ? (
+                        <>
+                            <div className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full mr-2"></div>
+                            正在保存...
+                        </>
+                    ) : (
+                        <>
+                            <PlusCircle className="w-5 h-5 mr-2" />
+                            保存新菜品
+                        </>
+                    )}
+                </button>
+            </div>
+        </div>
+    );
+};
+
+/**
+ * 菜单列表与管理页面 (Manage View)
+ */
+const ManageView = ({ db, menuItems, onSaveMessage }) => {
+    const [currentFilter, setCurrentFilter] = useState('All');
+    const [editingId, setEditingId] = useState(null);
+    const [editName, setEditName] = useState('');
+    const [editCategory, setEditCategory] = useState('');
+
+    // 提取所有分类并格式化
+    const allCategories = useMemo(() => {
+        const categories = new Set(menuItems.map(item => item.category));
+        return ['All', ...Array.from(categories)].map(c => c.charAt(0).toUpperCase() + c.slice(1));
+    }, [menuItems]);
+
+    // 筛选菜单项
+    const filteredItems = useMemo(() => {
+        if (currentFilter === 'All') return menuItems;
+        return menuItems.filter(item => item.category.toUpperCase() === currentFilter.toUpperCase());
+    }, [menuItems, currentFilter]);
+
+    // 删除菜肴
+    const deleteDish = async (dishId, dishName) => {
+        if (!confirm(`确定要永久删除菜单项 "${dishName}" 吗？该操作将从共享列表中移除。`)) return;
+
+        try {
+            const docRef = doc(db, getCollectionPath(), dishId);
+            await deleteDoc(docRef);
+            onSaveMessage(`${dishName} 已从共享列表中永久删除。`, 'success');
+        } catch (error) {
+            console.error("删除菜单项失败:", error);
+            onSaveMessage('删除失败，请检查网络或权限。', 'error');
+        }
+    };
+    
+    // 启用编辑模式
+    const startEdit = (item) => {
+        setEditingId(item.id);
+        setEditName(item.name);
+        setEditCategory(item.category);
+    };
+
+    // 保存编辑
+    const updateDish = async (dishId) => {
+        if (!editName.trim()) {
+            onSaveMessage('菜名不能为空！', 'error');
+            return;
+        }
+
+        const newCategory = editCategory.trim().toLowerCase() || '其他';
+        
+        try {
+            const docRef = doc(db, getCollectionPath(), dishId);
+            await updateDoc(docRef, {
+                name: editName.trim(),
+                category: newCategory
             });
+
+            onSaveMessage(`${editName.trim()} 已成功更新并共享！`, 'success');
+            setEditingId(null); // 退出编辑模式
+        } catch (error) {
+            console.error("更新菜肴失败:", error);
+            onSaveMessage(`更新失败: ${error.message}`, 'error');
         }
-
-        /**
-         * 保存新菜肴到 Firestore
-         */
-        window.saveDish = async function() {
-            // ... (saveDish 逻辑不变)
-            if (!isAppReady || !db) {
-                displayMessage('save-message', '应用未准备就绪，请稍候。', 'error');
-                return;
-            }
-
-            const nameInput = document.getElementById('dish-name');
-            const categoryInput = document.getElementById('dish-category');
-            const name = nameInput.value.trim();
-            let category = categoryInput.value.trim().toLowerCase() || '其他';
-
-            if (!name) {
-                displayMessage('save-message', '菜名不能为空！', 'error');
-                return;
-            }
-
-            const newDish = {
-                name: name,
-                category: category, 
-                createdAt: new Date().toISOString(),
-                addedBy: userId 
-            };
-
-            try {
-                const menuColRef = collection(db, getCollectionPath());
-                await addDoc(menuColRef, newDish);
-                displayMessage('save-message', `${name} 保存成功并已共享！`, 'success');
-                nameInput.value = '';
-                categoryInput.value = '';
-            } catch (error) {
-                console.error("保存菜肴失败:", error);
-                displayMessage('save-message', `保存失败: ${error.message}`, 'error');
-            }
-        }
+    };
+    
+    // 菜单列表渲染项
+    const renderMenuItem = (item) => {
+        const isEditing = editingId === item.id;
+        const categoryDisplay = item.category.charAt(0).toUpperCase() + item.category.slice(1);
         
-        /**
-         * 从 Firestore 中删除菜单项
-         */
-        window.deleteDish = async function(dishId, dishName) {
-            if (!isAppReady || !db) return;
-
-            if (!confirm(`确定要永久删除菜单项 "${dishName}" 吗？该操作将从共享列表中移除。`)) return;
-
-            try {
-                const docRef = doc(db, getCollectionPath(), dishId);
-                await deleteDoc(docRef);
-                displayMessage('save-message', `${dishName} 已从共享列表中永久删除。`, 'success');
-            } catch (error) {
-                console.error("删除菜单项失败:", error);
-                displayMessage('save-message', '删除失败，请检查网络或权限。', 'error');
-            }
-        }
-        
-        /**
-         * 更新 Firestore 中的菜肴数据
-         */
-        window.updateDish = async function(dishId) {
-            if (!isAppReady || !db) {
-                displayMessage('save-message', '应用未准备就绪，请稍候。', 'error');
-                return;
-            }
-
-            const nameInput = document.getElementById(`edit-name-${dishId}`);
-            const categoryInput = document.getElementById(`edit-category-${dishId}`);
-            const newName = nameInput.value.trim();
-            const newCategory = categoryInput.value.trim().toLowerCase() || '其他';
-            
-            if (!newName) {
-                displayMessage('save-message', '菜名不能为空！', 'error');
-                return;
-            }
-
-            try {
-                const docRef = doc(db, getCollectionPath(), dishId);
-                await updateDoc(docRef, {
-                    name: newName,
-                    category: newCategory
-                });
-
-                // 更新成功后，切换回显示模式
-                window.toggleEdit(dishId, false);
-                displayMessage('save-message', `${newName} 已成功更新并共享！`, 'success');
-            } catch (error) {
-                console.error("更新菜肴失败:", error);
-                displayMessage('save-message', `更新失败: ${error.message}`, 'error');
-            }
-        }
-        
-        // =================================================================
-        // UI 交互与渲染 (UI Interaction & Rendering)
-        // =================================================================
-
-        /**
-         * 切换菜单项的编辑/显示模式
-         * @param {string} dishId - 文档ID
-         * @param {boolean} enableEdit - true 启用编辑模式，false 禁用/取消
-         */
-        window.toggleEdit = function(dishId, enableEdit) {
-            const displayEl = document.getElementById(`display-mode-${dishId}`);
-            const editEl = document.getElementById(`edit-mode-${dishId}`);
-            const displayActionsEl = document.getElementById(`display-actions-${dishId}`);
-            const editActionsEl = document.getElementById(`edit-actions-${dishId}`);
-            
-            if (enableEdit) {
-                // 启用编辑模式
-                displayEl.classList.add('hidden');
-                displayActionsEl.classList.add('hidden');
-                editEl.classList.remove('hidden');
-                editActionsEl.classList.remove('hidden');
+        return (
+            <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-lg transition duration-150 hover:shadow-xl hover:bg-[#FFFDFB]">
                 
-                // 确保输入框值是当前显示的值
-                const item = window.menuItems.find(i => i.id === dishId);
-                if (item) {
-                     document.getElementById(`edit-name-${dishId}`).value = item.name;
-                     document.getElementById(`edit-category-${dishId}`).value = item.category;
-                     document.getElementById(`edit-name-${dishId}`).focus();
-                }
-            } else {
-                // 禁用/取消编辑模式
-                editEl.classList.add('hidden');
-                editActionsEl.classList.add('hidden');
-                displayEl.classList.remove('hidden');
-                displayActionsEl.classList.remove('hidden');
-                // 取消时不进行数据更新
-            }
-        }
-        
-        /**
-         * 渲染菜单列表 (已添加编辑功能)
-         */
-        function renderMenuItems(items, filter) {
-            const menuListEl = document.getElementById('menu-list');
-            const menuCountEl = document.getElementById('menu-count');
-            const emptyMessageEl = document.getElementById('empty-message');
-            
-            menuListEl.innerHTML = '';
-            
-            const filteredItems = filter === 'All' 
-                ? items 
-                : items.filter(item => item.category === filter.toLowerCase());
-
-            menuCountEl.textContent = items.length;
-            
-            if (filteredItems.length === 0 && items.length > 0 && filter !== 'All') {
-                // 如果有数据但筛选后为空
-                emptyMessageEl.textContent = `在分类 "${filter}" 下没有找到菜肴。`;
-                emptyMessageEl.classList.remove('hidden');
-            } else if (items.length === 0) {
-                 // 如果完全没有数据
-                emptyMessageEl.textContent = `您还没有添加任何菜肴！`;
-                emptyMessageEl.classList.remove('hidden');
-            } else {
-                emptyMessageEl.classList.add('hidden');
-            }
-
-            filteredItems.forEach(item => {
-                const categoryDisplay = item.category.charAt(0).toUpperCase() + item.category.slice(1);
-                const div = document.createElement('div');
-                div.id = `dish-row-${item.id}`; // Add ID for toggling
-                div.className = "flex justify-between items-start bg-gray-50 p-3 rounded-lg border border-gray-200 transition duration-100 hover:shadow-sm";
-
-                div.innerHTML = `
-                    <!-- 1. Display Mode (默认显示) -->
-                    <div id="display-mode-${item.id}" class="flex-grow flex flex-col sm:flex-row sm:items-center justify-start min-w-0">
-                        <span class="text-gray-900 font-medium truncate">${item.name}</span>
-                        <span class="mt-1 sm:mt-0 ml-0 sm:ml-4 flex-shrink-0 inline-block text-xs font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">${categoryDisplay}</span>
+                {isEditing ? (
+                    // 编辑模式
+                    <div className="flex-grow space-y-2">
+                        <input
+                            type="text"
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            className="w-full p-2 text-base font-semibold border border-[#B33939] rounded-lg focus:ring-[#B33939] focus:border-[#B33939]"
+                            placeholder="菜名"
+                        />
+                        <input
+                            type="text"
+                            value={editCategory}
+                            onChange={(e) => setEditCategory(e.target.value)}
+                            className="w-full p-2 text-sm border border-[#B33939]/50 rounded-lg focus:ring-[#B33939] focus:border-[#B33939]"
+                            placeholder="分类"
+                        />
                     </div>
-
-                    <!-- 2. Edit Mode (默认隐藏) -->
-                    <div id="edit-mode-${item.id}" class="hidden flex-grow space-y-2 sm:space-y-0 sm:space-x-3 sm:flex min-w-0">
-                        <input type="text" id="edit-name-${item.id}" value="${item.name.replace(/"/g, '&quot;')}" 
-                               class="w-full sm:w-1/2 p-2 text-sm border border-indigo-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 min-w-0"/>
-                        <input type="text" id="edit-category-${item.id}" value="${item.category.replace(/"/g, '&quot;')}" 
-                               class="w-full sm:w-1/3 p-2 text-sm border border-indigo-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 min-w-0"/>
-                    </div>
-
-                    <!-- 3. Actions -->
-                    <div class="flex space-x-2 ml-4 flex-shrink-0">
-                        <!-- Display Actions (Edit and Delete Buttons) -->
-                        <div id="display-actions-${item.id}" class="flex space-x-2">
-                            <button onclick="toggleEdit('${item.id}', true)" 
-                                    class="text-blue-500 hover:text-blue-700 p-1 rounded-full hover:bg-blue-100 transition duration-150" 
-                                    title="编辑菜肴">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                    <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zm-3.22 3.22L7.382 9.474 5.315 8.16l2.164-2.164 2.828 2.828z" />
-                                </svg>
-                            </button>
-                            <button onclick="deleteDish('${item.id}', '${item.name.replace(/'/g, "\\'")}')" 
-                                    class="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100 transition duration-150" 
-                                    title="删除菜肴">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 10-2 0v6a1 1 0 102 0V8z" clip-rule="evenodd" />
-                                </svg>
-                            </button>
-                        </div>
-                        
-                        <!-- Edit Actions (Save/Cancel Buttons) -->
-                        <div id="edit-actions-${item.id}" class="hidden flex space-x-2">
-                            <button onclick="updateDish('${item.id}')" 
-                                    class="text-green-500 hover:text-green-700 p-1 rounded-full hover:bg-green-100 transition duration-150" 
-                                    title="保存更改">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                                </svg>
-                            </button>
-                            <button onclick="toggleEdit('${item.id}', false)" 
-                                    class="text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-100 transition duration-150" 
-                                    title="取消编辑">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-                                </svg>
-                            </button>
+                ) : (
+                    // 显示模式
+                    <div className="flex-grow flex items-center justify-start min-w-0 space-x-3">
+                        <DishIcon className="w-6 h-6 text-[#B33939] flex-shrink-0" />
+                        <div className="min-w-0">
+                            <span className="text-gray-900 font-bold text-lg truncate block">{item.name}</span>
+                            <span className="mt-1 flex-shrink-0 inline-block text-xs font-medium bg-[#8B4513]/10 text-[#8B4513] px-3 py-0.5 rounded-full shadow-inner">{categoryDisplay}</span>
                         </div>
                     </div>
-                `;
-                menuListEl.appendChild(div);
-            });
+                )}
+
+                {/* 操作按钮 */}
+                <div className="flex space-x-2 ml-4 flex-shrink-0">
+                    {isEditing ? (
+                        <>
+                            {/* 保存/取消按钮 */}
+                            <button onClick={() => updateDish(item.id)} className="text-green-600 hover:text-green-800 p-2 rounded-full hover:bg-green-100 transition duration-150 shadow-md" title="保存更改">
+                                <Check />
+                            </button>
+                            <button onClick={() => setEditingId(null)} className="text-gray-500 hover:text-gray-700 p-2 rounded-full hover:bg-gray-100 transition duration-150 shadow-md" title="取消编辑">
+                                <X />
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            {/* 编辑/删除按钮 */}
+                            <button onClick={() => startEdit(item)} className="text-blue-500 hover:text-blue-700 p-2 rounded-full hover:bg-blue-100 transition duration-150 shadow-sm" title="编辑菜肴">
+                                <Edit />
+                            </button>
+                            <button onClick={() => deleteDish(item.id, item.name)} className="text-red-500 hover:text-red-700 p-2 rounded-full hover:bg-red-100 transition duration-150 shadow-sm" title="删除菜肴">
+                                <Trash2 />
+                            </button>
+                        </>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+
+    return (
+        <div className="space-y-6 p-6 bg-white rounded-2xl shadow-xl border border-[#D9C4A8]">
+            <h2 className="text-2xl font-bold text-[#8B4513]">📋 菜单库总览 (共 {menuItems.length} 项)</h2>
+
+            {/* 分类标签和过滤 */}
+            <div className="flex flex-wrap gap-2 pt-2 pb-4 border-b border-[#D9C4A8] custom-scrollbar overflow-x-auto">
+                {allCategories.map(category => (
+                    <button
+                        key={category}
+                        onClick={() => setCurrentFilter(category)}
+                        className={`px-4 py-1.5 text-sm font-semibold rounded-full transition duration-200 whitespace-nowrap shadow-md ${
+                            category === currentFilter
+                            ? 'bg-[#B33939] text-white hover:bg-[#992D2D] ring-2 ring-[#B33939]/50' 
+                            : 'bg-[#FAF6F2] text-gray-700 hover:bg-[#F0EAE4] border border-[#D9C4A8]'
+                        }`}
+                    >
+                        {category} ({category === 'All' 
+                            ? menuItems.length 
+                            : menuItems.filter(item => item.category.toUpperCase() === category.toUpperCase()).length
+                        })
+                    </button>
+                ))}
+            </div>
+
+            {/* 菜单列表 */}
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                {filteredItems.length === 0 ? (
+                    <p className="text-gray-400 text-center py-10">
+                        {menuItems.length === 0 ? "请先添加菜肴到菜单库！" : `在分类 "${currentFilter}" 下没有找到菜单。`}
+                    </p>
+                ) : (
+                    filteredItems.map(renderMenuItem)
+                )}
+            </div>
+        </div>
+    );
+};
+
+/**
+ * 随机点餐与推荐页面 (Recommend View)
+ */
+const RecommendView = ({ menuItems, onSaveMessage }) => {
+    const [query, setQuery] = useState('');
+    const [recommendation, setRecommendation] = useState(null);
+    const [isLoading, setIsLoading] = useState(false);
+
+    // 简单本地匹配逻辑（基于关键词匹配分类）
+    const simpleLocalCategoryMatch = useCallback((query, items) => {
+        const allCategories = [...new Set(items.map(item => item.category))];
+        const lowerQuery = query.toLowerCase();
+        
+        const keywordMap = {
+            '辣': '川菜', '清淡': '素食', '快': '快餐', '简单': '快餐',
+            '汤': '汤', '粥': '粥', '早': '早餐', '家常': '家常菜',
+            '饭': '主食', '肉': '荤菜', '鱼': '海鲜'
+        };
+        
+        for (const category of allCategories) { if (lowerQuery.includes(category)) return category; }
+        for (const keyword in keywordMap) {
+            if (lowerQuery.includes(keyword)) {
+                const matchedCategory = keywordMap[keyword].toLowerCase();
+                if (allCategories.includes(matchedCategory)) return matchedCategory;
+            }
         }
         
-        /**
-         * 渲染分类筛选标签
-         */
-        function renderCategoryFilters(items) {
-            const container = document.getElementById('category-filter-container');
-            container.innerHTML = '';
-            
-            const categories = ['All', ...new Set(items.map(item => item.category))].map(c => c.charAt(0).toUpperCase() + c.slice(1));
-            
-            categories.forEach(category => {
-                const button = document.createElement('button');
-                
-                const isActive = category === window.currentFilter;
-                
-                button.className = `px-3 py-1 text-sm font-medium rounded-full transition duration-150 whitespace-nowrap ${
-                    isActive 
-                    ? 'bg-indigo-600 text-white shadow-md' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`;
-                button.textContent = category;
-                
-                button.onclick = () => {
-                    window.currentFilter = category;
-                    renderCategoryFilters(items); 
-                    renderMenuItems(items, category); 
-                };
-                
-                container.appendChild(button);
-            });
+        return null;
+    }, []);
+
+    const handleRecommendation = async () => {
+        if (menuItems.length === 0) {
+            onSaveMessage('请先添加菜单，我才能帮你推荐哦！', 'error');
+            return;
         }
 
-        // =================================================================
-        // 随机推荐逻辑 (Random Recommendation Logic - Fallback Mode)
-        // =================================================================
+        setIsLoading(true);
+        setRecommendation(null);
         
-        /**
-         * 使用本地关键词匹配进行推荐 (LLM的简单替代)
-         */
-        function simpleLocalCategoryMatch(query, categories) {
-            const lowerQuery = query.toLowerCase();
-            for (const category of categories) { if (lowerQuery.includes(category)) return category; }
-            
-            const keywordMap = {
-                '辣': '川菜', '清淡': '素食', '快': '快餐', '简单': '快餐',
-                '汤': '汤', '粥': '粥', '早': '早餐', '家常': '家常菜',
-                '饭': '主食', '肉': '荤菜', '鱼': '海鲜'
-            };
-            
-            for (const keyword in keywordMap) {
-                if (lowerQuery.includes(keyword)) {
-                    const matchedCategory = keywordMap[keyword].toLowerCase();
-                    if (categories.includes(matchedCategory)) return matchedCategory;
+        const matchedCategory = simpleLocalCategoryMatch(query, menuItems);
+        
+        let filteredDishes = menuItems;
+        let recommendationSource = '从所有菜品中随机挑选';
+
+        if (matchedCategory) {
+            filteredDishes = menuItems.filter(item => item.category === matchedCategory);
+            recommendationSource = `已匹配到分类: ${matchedCategory.charAt(0).toUpperCase() + matchedCategory.slice(1)}`;
+        } else if (query.trim()) {
+            recommendationSource = '未匹配到特定分类，随机挑选';
+        }
+
+        if (filteredDishes.length === 0) {
+            filteredDishes = menuItems;
+            recommendationSource = '匹配分类无菜，从所有菜品中随机挑选';
+        }
+        
+        const randomIndex = Math.floor(Math.random() * filteredDishes.length);
+        const dish = filteredDishes[randomIndex];
+
+        await new Promise(resolve => setTimeout(resolve, 800)); // 模拟思考时间
+
+        setRecommendation({
+            name: dish.name,
+            category: dish.category.charAt(0).toUpperCase() + dish.category.slice(1),
+            source: recommendationSource
+        });
+        setIsLoading(false);
+    };
+
+    return (
+        <div className="space-y-8 p-6 bg-white rounded-2xl shadow-xl border border-[#D9C4A8]">
+            <h2 className="text-2xl font-bold text-[#8B4513] border-b pb-3">🍽️ 智能点餐机</h2>
+            <p className="text-gray-600">输入您的要求，或直接点击按钮，让系统在共享菜单中随机为您挑选今日菜品。</p>
+
+            <div className="space-y-5">
+                <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="我想吃点清淡的... / 随便来个家常菜"
+                    className="w-full p-4 border border-[#8B4513]/30 rounded-xl focus:ring-[#8B4513] focus:border-[#8B4513] transition duration-200 text-base shadow-sm"
+                />
+                <button
+                    onClick={handleRecommendation}
+                    disabled={isLoading || menuItems.length === 0}
+                    className={`w-full text-white font-extrabold tracking-wider py-4 rounded-xl shadow-lg transition duration-200 transform hover:scale-[1.01] flex items-center justify-center ${
+                        isLoading || menuItems.length === 0 ? 'bg-[#8B4513]/70 cursor-not-allowed' : 'bg-[#8B4513] hover:bg-[#6F3624] active:bg-[#4A2C2A]'
+                    }`}
+                >
+                    {isLoading ? (
+                        <>
+                            <div className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full mr-2"></div>
+                            正在挑选...
+                        </>
+                    ) : (
+                        <>
+                            <Home className="w-5 h-5 mr-2" />
+                            随机抽一个菜！
+                        </>
+                    )}
+                </button>
+            </div>
+
+            {/* 推荐结果展示 - 使用高级卡片样式 */}
+            <div className="min-h-[8rem] flex flex-col justify-center items-center text-center p-6 bg-[#FAF6F2] border border-[#D9C4A8] rounded-2xl shadow-inner">
+                {recommendation ? (
+                    <>
+                        <p className="text-4xl font-extrabold text-[#B33939] mb-2 animate-bounce">{recommendation.name}！</p>
+                        <p className="text-base text-gray-700">
+                            所属分类：<span className="font-semibold text-[#8B4513]">{recommendation.category}</span>
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">({recommendation.source})</p>
+                    </>
+                ) : (
+                    <p className="text-lg text-[#8B4513] font-medium">请点击按钮开始点餐！</p>
+                )}
+            </div>
+        </div>
+    );
+};
+
+
+// =================================================================
+// 主应用组件 (Main App Component)
+// =================================================================
+const App = () => {
+    const [currentView, setCurrentView] = useState('recommend'); 
+    const [userId, setUserId] = useState(null);
+    const [isFirebaseReady, setIsFirebaseReady] = useState(false);
+    const [menuItems, setMenuItems] = useState([]);
+    const [saveMessage, setSaveMessage] = useState({ text: '', type: 'info' });
+
+    // 消息提示处理函数
+    const handleSaveMessage = (text, type = 'info') => {
+        setSaveMessage({ text, type });
+        setTimeout(() => setSaveMessage({ text: '', type: 'info' }), 3000);
+    };
+
+    // Firebase 初始化与数据监听
+    useEffect(() => {
+        if (!CUSTOM_FIREBASE_CONFIG.apiKey) return;
+        
+        setLogLevel('debug'); 
+        const app = initializeApp(CUSTOM_FIREBASE_CONFIG);
+        dbInstance = getFirestore(app);
+        authInstance = getAuth(app);
+        
+        const unsubscribeAuth = onAuthStateChanged(authInstance, async (user) => {
+            if (user) {
+                setUserId(user.uid);
+                setIsFirebaseReady(true);
+            } else {
+                try {
+                    await signInAnonymously(authInstance);
+                } catch (error) {
+                    console.error("Firebase 匿名登录失败:", error);
+                    handleSaveMessage("认证失败，请检查 Firebase 匿名登录是否已启用。", 'error');
                 }
             }
-            
-            const randomIndex = Math.floor(Math.random() * categories.length);
-            return categories[randomIndex] || '其他';
+        });
+
+        return () => unsubscribeAuth();
+    }, []);
+
+    // Firestore 数据监听
+    useEffect(() => {
+        if (!isFirebaseReady || !dbInstance) return;
+
+        const menuColRef = collection(dbInstance, getCollectionPath());
+        
+        const unsubscribeSnapshot = onSnapshot(menuColRef, (snapshot) => {
+            const fetchedItems = [];
+            snapshot.forEach(doc => {
+                fetchedItems.push({ id: doc.id, ...doc.data() });
+            });
+            setMenuItems(fetchedItems);
+        }, (error) => {
+            console.error("监听菜单数据失败:", error);
+            handleSaveMessage('实时连接失败，请刷新重试。', 'error');
+        });
+
+        return () => unsubscribeSnapshot();
+    }, [isFirebaseReady]);
+
+    // 渲染当前视图
+    const renderView = () => {
+        if (!isFirebaseReady) {
+            return (
+                <div className="text-center py-20 bg-white rounded-2xl shadow-xl border border-[#D9C4A8]">
+                    <div className="animate-spin inline-block w-10 h-10 border-4 border-[#B33939] border-t-transparent rounded-full"></div>
+                    <p className="mt-4 text-[#B33939] font-semibold">正在连接您的私人菜单云端...</p>
+                </div>
+            );
         }
 
-        /**
-         * 处理用户的随机点餐请求
-         */
-        window.handleRecommendation = async function() {
-            const queryInput = document.getElementById('recommendation-query');
-            const resultEl = document.getElementById('recommendation-result');
-            const recommendBtn = document.getElementById('recommend-button');
+        switch (currentView) {
+            case 'recommend':
+                return <RecommendView menuItems={menuItems} onSaveMessage={handleSaveMessage} />;
+            case 'manage':
+                return <ManageView db={dbInstance} menuItems={menuItems} onSaveMessage={handleSaveMessage} />;
+            case 'add':
+                return <AddView db={dbInstance} userId={userId} onSaveMessage={handleSaveMessage} />;
+            default:
+                return <RecommendView menuItems={menuItems} onSaveMessage={handleSaveMessage} />;
+        }
+    };
 
-            const userQuery = queryInput.value.trim();
-            const items = window.menuItems;
+    // 状态横幅样式
+    const messageStyle = {
+        success: 'bg-green-100 text-green-700 border-l-4 border-green-500',
+        error: 'bg-red-100 text-red-700 border-l-4 border-red-500',
+        info: 'bg-blue-100 text-blue-700 border-l-4 border-blue-500'
+    };
 
-            if (!isAppReady) {
-                 resultEl.innerHTML = '请等待应用连接到云端。';
-                 return;
-            }
-            if (items.length === 0) {
-                resultEl.innerHTML = '请先添加菜单，我才能帮你推荐哦！';
-                return;
-            }
+    return (
+        <div className="min-h-screen bg-[#FAF6F2] p-4 sm:p-8 flex flex-col items-center">
+            <style jsx="true">{`
+                /* Custom Scrollbar for better aesthetics */
+                .custom-scrollbar::-webkit-scrollbar {
+                    width: 6px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-thumb {
+                    background-color: #D9C4A8;
+                    border-radius: 3px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-track {
+                    background-color: #F0EAE4;
+                }
+            `}</style>
             
-            // 启用加载状态
-            recommendBtn.disabled = true;
-            recommendBtn.textContent = '思考中... 请稍候...';
-            resultEl.classList.remove('text-lg', 'font-medium');
-            resultEl.innerHTML = `<div class="animate-pulse text-sm text-green-600">正在从菜单中挑选...</div>`;
-            
-            const allCategories = [...new Set(items.map(item => item.category))];
-            const matchedCategory = simpleLocalCategoryMatch(userQuery, allCategories);
-            
-            let filteredDishes = items.filter(item => item.category === matchedCategory);
-            
-            let isRandomFallback = false;
-            if (filteredDishes.length === 0 || !userQuery) {
-                filteredDishes = items; // 如果没有输入或没有匹配，则从所有菜单中随机选
-                isRandomFallback = true;
-            }
-            
-            const randomIndex = Math.floor(Math.random() * filteredDishes.length);
-            const recommendation = filteredDishes[randomIndex];
-
-            const finalMessage = `
-                <p class="text-xl font-extrabold text-green-700 mb-2">${recommendation.name}！</p>
-                <p class="text-sm text-gray-600">
-                    ${isRandomFallback && userQuery
-                        ? `无法精确匹配您的要求，为您随机推荐了：${recommendation.category.charAt(0).toUpperCase() + recommendation.category.slice(1)}`
-                        : isRandomFallback && !userQuery
-                        ? `为您随机推荐了：${recommendation.category.charAt(0).toUpperCase() + recommendation.category.slice(1)}` 
-                        : `根据您的要求 (${matchedCategory.charAt(0).toUpperCase() + matchedCategory.slice(1)}) 推荐，菜品分类是：${recommendation.category.charAt(0).toUpperCase() + recommendation.category.slice(1)}`}
+            <div className="w-full max-w-2xl bg-[#FFFDFB] shadow-2xl rounded-3xl p-6 sm:p-8 lg:p-10 mb-6 border border-[#EBE3D7]">
+                <h1 className="text-4xl font-extrabold text-[#B33939] mb-1 tracking-wide">
+                    俊俊菜单菌
+                    <DishIcon className="w-8 h-8 inline-block ml-3 transform translate-y-[-2px]" />
+                </h1>
+                <p className="text-sm text-gray-500 mb-4 border-b pb-4">
+                    共享ID (用于验证连接): 
+                    <span className="font-mono text-xs bg-[#FAF6F2] px-2 py-0.5 rounded ml-2 text-gray-600">
+                        {userId ? `ID: ${userId.substring(0, 8)}... | 菜品总数: ${menuItems.length}` : '连接中...'}
+                    </span>
                 </p>
-            `;
 
-            // 恢复状态
-            setTimeout(() => {
-                resultEl.classList.add('text-lg', 'font-medium');
-                resultEl.innerHTML = finalMessage;
-                recommendBtn.disabled = false;
-                recommendBtn.textContent = '随机抽一个菜！🍽️';
-            }, 800); // 模拟思考时间
-        }
+                {/* 消息提示区 */}
+                {saveMessage.text && (
+                    <div className={`p-3 mb-4 rounded-lg text-sm font-medium shadow-md ${messageStyle[saveMessage.type] || messageStyle.info}`}>
+                        {saveMessage.text}
+                    </div>
+                )}
+                
+                {/* 优雅导航栏 */}
+                <div className="flex justify-between p-1 bg-[#F0EAE4] rounded-xl shadow-inner mb-8">
+                    {[
+                        { key: 'recommend', label: '今天吃啥', icon: Home },
+                        { key: 'manage', label: '管理菜单', icon: ListChecks },
+                        { key: 'add', label: '添加菜品', icon: PlusCircle },
+                    ].map(({ key, label, icon: Icon }) => (
+                        <button
+                            key={key}
+                            onClick={() => setCurrentView(key)}
+                            className={`flex-1 flex items-center justify-center py-2 sm:py-3 rounded-xl text-sm font-bold tracking-wider transition duration-300 ${
+                                currentView === key 
+                                    ? 'bg-[#8B4513] text-white shadow-lg shadow-[#8B4513]/30' 
+                                    : 'text-gray-700 hover:bg-[#D9C4A8] hover:text-white'
+                            }`}
+                        >
+                            <Icon className="w-5 h-5 mr-1.5" />
+                            <span className="hidden sm:inline">{label}</span>
+                        </button>
+                    ))}
+                </div>
 
-    </script>
+                {/* 动态内容区域 */}
+                {renderView()}
+            </div>
+            
+        </div>
+    );
+};
 
-</body>
-</html>
+export default App;
 
